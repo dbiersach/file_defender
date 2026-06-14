@@ -31,6 +31,10 @@ add_executable(fanotify_collector src/collector/fanotify_collector.c)
 target_compile_options(fanotify_collector PRIVATE -Wall -Wextra)
 target_link_libraries(fanotify_collector PRIVATE m)  # log2() lives in libm
 
+# --- Collector: fanotify FID mode (worked example: rename/delete/create) ---
+add_executable(fanotify_fid_collector src/collector/fanotify_fid_collector.c)
+target_compile_options(fanotify_fid_collector PRIVATE -Wall -Wextra)
+
 # --- Collector: inotify (a small teaching comparison) ---
 add_executable(inotify_demo src/collector/inotify_demo.c)
 target_compile_options(inotify_demo PRIVATE -Wall -Wextra)

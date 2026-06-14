@@ -115,6 +115,116 @@ def generate_benign_event_log(seed: int = 123, n_events: int = 1200) -> pd.DataF
     return pd.DataFrame(rows, columns=EVENT_COLUMNS)
 
 
+# Files the simulated ransomware sweeps through, spread across many directories
+# and file types (a realistic target set for a home directory).
+_RANSOMWARE_TARGETS = [
+    "/home/student/Documents/resume.docx",
+    "/home/student/Documents/budget.ods",
+    "/home/student/Documents/tax/return_2025.xlsx",
+    "/home/student/Documents/tax/w2.pdf",
+    "/home/student/Documents/tax/receipts.csv",
+    "/home/student/Pictures/wedding.jpg",
+    "/home/student/Pictures/graduation.png",
+    "/home/student/Pictures/trip/beach.jpg",
+    "/home/student/Desktop/passwords.txt",
+    "/home/student/Desktop/todo.md",
+    "/home/student/Videos/birthday.mp4",
+    "/home/student/Music/playlist.m3u",
+    "/home/student/Projects/thesis/chapter1.tex",
+    "/home/student/Projects/thesis/data.csv",
+    "/home/student/.config/app/settings.json",
+]
+
+
+def generate_attack_scenario(seed: int = 7) -> pd.DataFrame:
+    """Build a realistic mixed event log: several benign processes plus one
+    ransomware process, for an end-to-end detection demo.
+
+    Benign processes (code, libreoffice, firefox) work quietly in their own
+    directories at normal entropy. Partway through, a 'cryptor' process sweeps
+    the home directory: for each file it reads the original, writes a
+    high-entropy '.locked' copy, then deletes the original - across many
+    directories and file types in a few seconds.
+    """
+    rng = np.random.default_rng(seed)
+    rows: list[dict[str, object]] = []
+
+    def add(t, name, pid, op, path, size_bytes=0, entropy=0.0):
+        rows.append(
+            {
+                "timestamp_seconds": round(float(t), 3),
+                "user_name": "student",
+                "process_name": name,
+                "process_id": pid,
+                "operation": op,
+                "path": path,
+                "bytes": int(size_bytes),
+                "byte_entropy": round(float(entropy), 2),
+            }
+        )
+
+    # Benign background activity (same cadence as the training baseline).
+    benign = [
+        ("code", 2001, "/home/student/Projects/app", [".py", ".md"], 4.3),
+        ("libreoffice", 2002, "/home/student/Documents", [".odt", ".ods"], 4.8),
+        ("firefox", 2003, "/home/student/Downloads", [".pdf", ".html"], 5.2),
+    ]
+    t = 0.0
+    for _ in range(90):
+        t += float(rng.exponential(3.0))
+        name, pid, directory, exts, entropy_mean = benign[rng.integers(len(benign))]
+        op = str(rng.choice(["open", "read", "write", "close"], p=[0.3, 0.4, 0.2, 0.1]))
+        path = (
+            f"{directory}/file{int(rng.integers(0, 10))}{exts[rng.integers(len(exts))]}"
+        )
+        if op in ("open", "close"):
+            add(t, name, pid, op, path)
+        else:
+            add(
+                t,
+                name,
+                pid,
+                op,
+                path,
+                rng.integers(512, 150_000),
+                float(np.clip(rng.normal(entropy_mean, 0.3), 0.0, 8.0)),
+            )
+
+    # The ransomware burst, starting halfway through the benign timeline.
+    cryptor_time = t * 0.5
+    for target in _RANSOMWARE_TARGETS:
+        cryptor_time += float(rng.uniform(0.2, 0.6))
+        add(cryptor_time, "cryptor", 6666, "open", target)
+        cryptor_time += float(rng.uniform(0.1, 0.3))
+        add(
+            cryptor_time,
+            "cryptor",
+            6666,
+            "read",
+            target,
+            rng.integers(50_000, 2_000_000),
+            float(np.clip(rng.normal(5.0, 0.6), 0.0, 8.0)),
+        )
+        cryptor_time += float(rng.uniform(0.1, 0.3))
+        add(
+            cryptor_time,
+            "cryptor",
+            6666,
+            "write",
+            target + ".locked",
+            rng.integers(50_000, 2_000_000),
+            float(np.clip(rng.normal(7.9, 0.08), 0.0, 8.0)),
+        )
+        cryptor_time += float(rng.uniform(0.05, 0.15))
+        add(cryptor_time, "cryptor", 6666, "delete", target)
+
+    return (
+        pd.DataFrame(rows, columns=EVENT_COLUMNS)
+        .sort_values("timestamp_seconds")
+        .reset_index(drop=True)
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate synthetic activity for testing."
@@ -124,9 +234,21 @@ if __name__ == "__main__":
         metavar="PATH",
         help="write a benign baseline raw-event CSV to PATH",
     )
+    parser.add_argument(
+        "--write-scenario",
+        metavar="PATH",
+        help="write a mixed benign + ransomware attack scenario CSV to PATH",
+    )
     args = parser.parse_args()
 
-    if args.write_events:
+    if args.write_scenario:
+        events = generate_attack_scenario()
+        events.to_csv(args.write_scenario, index=False)
+        ransom = int((events["process_name"] == "cryptor").sum())
+        print(
+            f"Wrote {len(events)} events ({ransom} from the ransomware) to {args.write_scenario}"
+        )
+    elif args.write_events:
         events = generate_benign_event_log()
         events.to_csv(args.write_events, index=False)
         print(f"Wrote {len(events)} benign events to {args.write_events}")

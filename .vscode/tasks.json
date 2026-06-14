@@ -44,6 +44,13 @@
             "command": "./build/file_defender_daemon --events testdata/sample_events.csv --model models/model.json",
             "problemMatcher": [],
             "dependsOn": "build"
+        },
+        {
+            "label": "run-demo (attack scenario)",
+            "type": "shell",
+            "command": "./build/file_defender_daemon --events testdata/attack_scenario.csv --model models/model.json",
+            "problemMatcher": [],
+            "dependsOn": "build"
         }
     ]
 }

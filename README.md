@@ -46,6 +46,16 @@ module to write or crash. `inotify` is included as a small teaching comparison
 (`inotify_demo`), and `eBPF` is noted as an advanced stretch goal. See the
 header comment in `src/collector/fanotify_collector.c` for details.
 
+There are two fanotify collectors:
+
+- **`fanotify_collector`** (primary) - classic mode: opens, reads, and writes
+  with content for entropy, plus the pid.
+- **`fanotify_fid_collector`** (worked example) - FID mode
+  (`FAN_REPORT_DFID_NAME`): the rename, delete, and create events that classic
+  mode misses (for example the `.locked` rename and the deletion of the
+  original). It reports the pid but not content. A complete deployment runs both
+  and merges their streams; the daemon already counts rename/delete events.
+
 ### The behavioral features
 
 Each rolling window of one process becomes six numbers (defined once in
@@ -106,6 +116,20 @@ uv run python python/train_isolation_forest.py \
 Expected: only `unknown_process` (pid 4242) is flagged; `code`, `libreoffice`,
 and `firefox` are not.
 
+### A larger, multi-process scenario
+
+`testdata/attack_scenario.csv` interleaves three benign processes with a
+`cryptor` process that sweeps 15 files across many directories (read original,
+write a high-entropy `.locked` copy, delete the original). Regenerate it with
+`uv run python python/simulate_activity.py --write-scenario testdata/attack_scenario.csv`.
+
+```bash
+./build/file_defender_daemon \
+    --events testdata/attack_scenario.csv --model models/model.json
+```
+
+Expected: only `cryptor` (pid 6666) is flagged.
+
 ## Live monitoring
 
 The collector needs root (`CAP_SYS_ADMIN`); the daemon runs as you. Piping them
@@ -140,17 +164,20 @@ uv run python python/verify_parity.py
 4. **Live defense** - run the collector and daemon together; test `--notify`.
 5. **Ethics review** - decide when software should alert vs. act. See
    `docs/SAFETY_AND_SCOPE.md`.
-6. **Stretch goals** - add rename/delete detection via fanotify FID mode, or a
-   minimal eBPF collector.
+6. **Stretch goals** - merge the classic and FID collectors into one event
+   stream (study `fanotify_fid_collector.c`), or add a minimal eBPF collector.
 
 ## Repository layout
 
 ```
-src/collector/   fanotify_collector.c (primary), inotify_demo.c (comparison)
+src/collector/   fanotify_collector.c     (primary: reads/writes + content)
+                 fanotify_fid_collector.c (worked example: rename/delete/create)
+                 inotify_demo.c           (teaching comparison)
 src/daemon/      main.cpp, feature_window.*, anomaly_model.* (Isolation Forest)
 src/common/      file_event.hpp (shared event schema)
 python/          features, simulator, trainer, parity verifier
-testdata/        sample_events.csv (demo), benign_baseline.csv (training)
+testdata/        sample_events.csv, attack_scenario.csv (demos),
+                 benign_baseline.csv (training)
 models/          trained model output (model.json, model.joblib)
 docs/            SAFETY_AND_SCOPE.md
 ```
