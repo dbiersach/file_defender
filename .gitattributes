@@ -23,9 +23,6 @@ CMakeLists.txt   text eol=lf
 .gitattributes   text eol=lf
 .python-version  text eol=lf
 
-# Windows-only helper keeps CRLF
-*.ps1 text eol=crlf
-
 # Binary assets (no conversion)
 *.png  binary
 *.jpg  binary
