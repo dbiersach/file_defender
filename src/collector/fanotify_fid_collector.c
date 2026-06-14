@@ -188,7 +188,9 @@ int main(int argc, char **argv) {
                     if (len > 0) {
                         dir_path[len] = '\0';
 
-                        char full_path[PATH_MAX];
+                        /* Sized to hold dir_path + '/' + name + '\0' without
+                         * truncation (both inputs are bounded by PATH_MAX). */
+                        char full_path[2 * PATH_MAX];
                         snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, name);
 
                         if (strncmp(full_path, watch_dir, watch_dir_len) == 0) {
