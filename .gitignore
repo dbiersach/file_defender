@@ -1,23 +1,87 @@
-# Python
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Linker files
+*.ilk
+
+# Debugger Files
+*.pdb
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+*.so.*
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Build directories
+build/
+Build/
+build-*/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+*.swp
+
+# vcpkg
+vcpkg_installed/
+
+# debug information files
+*.dwo
+
+# test output & cache
+Testing/
+.cache/
+
+# --- Python ---
 __pycache__/
 *.py[cod]
 .venv/
 
-# CMake / C / C++ build output
-build/
-*.o
-*.obj
-compile_commands.json
-
-# Trained model artifacts (regenerate with python/train_isolation_forest.py)
+# --- Project artifacts ---
+# Trained model output (regenerate with python/train_isolation_forest.py)
 models/*.json
 models/*.joblib
 
 # Recorded activity data (private; collect your own)
 data/
 
-# Editor / OS
+# --- Editor / OS ---
 .DS_Store
 
-# Claude Code local settings
+# --- Claude Code local settings ---
 .claude/settings.local.json
