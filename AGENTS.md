@@ -27,7 +27,8 @@ teaching value for a student learning systems programming and machine learning.
 
 ## C and C++
 
-- C targets **C17**, C++ targets **C++17**. Build with clang via CMake.
+- C targets **C17**, C++ targets **C++17**. Build with clang via CMake; the
+  `default` CMake preset pins `clang`/`clang++` (`cmake --preset default`).
 - Compile cleanly under `-Wall -Wextra` (the daemon also uses `-Wpedantic`).
 - Every source file starts with a comment explaining what it does and why.
 - Check the return value of every system call; print a helpful message on error.

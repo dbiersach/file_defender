@@ -90,10 +90,16 @@ bash scripts/setup_system_deps.sh
 # 2. VS Code extensions
 bash install_vscode_extensions.sh
 
-# 3. Build the C/C++ programs
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j"$(nproc)"
+# 3. Build the C/C++ programs (the preset pins the clang toolchain)
+cmake --preset default
+cmake --build --preset default -j"$(nproc)"
 ```
+
+The `default` preset (see `CMakePresets.json`) pins `clang`/`clang++` and a
+Debug build into `build/`, so the compiler matches the rest of the LLVM
+toolchain (clangd, clang-tidy, clang-format, LLDB) and a contributor's default
+`cc` cannot silently swap it. To build with a different compiler, override it
+explicitly, e.g. `cmake -S . -B build -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++`.
 
 Open `file_defender.code-workspace` in VS Code (or open the folder; the
 `.vscode/` settings apply either way).
