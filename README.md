@@ -1,14 +1,13 @@
 # File Defender
 
-**Utilizing AI in Ransomware Detection via Filesystem Behavior Anomaly Detection**
-
-A defensive cybersecurity research project that detects ransomware by analyzing filesystem behavior anomalies using machine learning (Isolation Forest).
+**Utilizing AI in Ransomware Detection via Filesystem Behavior Anomaly Detection** — a defensive cybersecurity research project that detects ransomware by analyzing filesystem behavior anomalies using machine learning (Isolation Forest).
 
 **This project is defensive.** It observes file activity and raises alerts. It contains no ransomware and never encrypts, corrupts, or mass-modifies files. See [`docs/SAFETY_AND_SCOPE.md`](docs/SAFETY_AND_SCOPE.md).
 
 ## What File Defender Does
 
 Ransomware typically behaves very differently from normal user activity:
+
 - **Rapid, high-volume file writes** across many directories
 - **High-entropy encrypted data** (looks random to statistical analysis)
 - **Repeated rename/delete cycles** (e.g., renaming files to `.locked`)
@@ -20,7 +19,7 @@ File Defender watches these behavioral patterns and alerts when a process deviat
 
 Three pieces, connected by a simple text stream of events:
 
-```
+```text
   +---------------------+        CSV events         +-----------------------+
   |  collector (C)      |  ---------------------->  |  daemon (C++)         |
   |  fanotify           |   pid, path, entropy...   |  rolling features per |
@@ -115,6 +114,7 @@ bash scripts/setup_system_deps.sh
 ```
 
 This installs:
+
 - Build tools (clang, CMake, git)
 - Python dev headers
 - uv package manager
@@ -126,6 +126,7 @@ bash install_vscode_extensions.sh
 ```
 
 Sets up:
+
 - C/C++ extensions (clangd, lldb for debugging)
 - Python extensions
 - CMake support
@@ -138,6 +139,7 @@ cmake --build build -j"$(nproc)"
 ```
 
 This compiles:
+
 - `fanotify_collector` - filesystem watcher
 - `fanotify_fid_collector` - rename/delete/create watcher
 - `file_defender_daemon` - anomaly detector
@@ -171,6 +173,7 @@ uv run python python/train_isolation_forest.py \
 **Expected:** only `unknown_process` (pid 4242) is flagged; `code`, `libreoffice`, and `firefox` are not.
 
 **What's happening:**
+
 - `benign_baseline.csv` contains typical file activity from normal use
 - `sample_events.csv` contains mostly normal activity, plus one process behaving like ransomware
 - The daemon trains on benign baseline, then scores the sample data
@@ -202,6 +205,7 @@ sudo ./build/fanotify_collector "$HOME" \
 ```
 
 **Flags:**
+
 - `--notify` - send desktop notifications when anomalies are detected
 - `--stop` - pause flagged processes with `SIGSTOP` (can resume with `kill -CONT <pid>`)
 - `--max-fpr N` - tune false positive rate (higher = more alerts, lower = fewer alerts)
@@ -214,12 +218,13 @@ Add `--stop` to pause a flagged process with `SIGSTOP` (opt-in). A paused proces
 
 Each line is one file operation:
 
-```
+```text
 timestamp,user,process,pid,operation,path,size,entropy
 1623456000,alice,code,1234,write,/home/alice/file.txt,1024,4.5
 ```
 
 **Fields:**
+
 - `timestamp` - Unix time
 - `user` - username
 - `process` - process name (from `/proc/[pid]/comm`)
@@ -245,12 +250,15 @@ The daemon groups events into **rolling time windows** per process. For a 10-sec
 ### Phase 2: Record Your Own Baseline
 
 1. Run the collector on your home directory:
+
    ```bash
    sudo ./build/fanotify_collector "$HOME" > my_baseline.csv
    ```
+
    (Let it run for 5-10 minutes during normal use)
 
 2. Retrain the model:
+
    ```bash
    uv run python python/train_isolation_forest.py \
        --events my_baseline.csv \
@@ -258,6 +266,7 @@ The daemon groups events into **rolling time windows** per process. For a 10-sec
    ```
 
 3. Test with live data:
+
    ```bash
    sudo ./build/fanotify_collector "$HOME" \
        | ./build/file_defender_daemon \
@@ -267,10 +276,12 @@ The daemon groups events into **rolling time windows** per process. For a 10-sec
 ### Phase 3: Tune Detection
 
 Adjust these parameters to balance **detection latency** vs. **false positives**:
+
 - `--window-size N` - seconds per window (default 10, lower = faster detection, more noise)
 - `--max-fpr N` - false positive rate threshold (higher = more alerts)
 
 Study the tradeoff:
+
 - **Fast detection** needs small windows and low thresholds (but more false alerts)
 - **Few false alerts** needs large windows and high thresholds (but slower detection)
 
@@ -283,6 +294,7 @@ Study the tradeoff:
 ### Phase 5: Ethics Review
 
 Read `docs/SAFETY_AND_SCOPE.md` for important guidance on:
+
 - When software should alert vs. act
 - Consent and privacy considerations
 - Scope and limits of this approach
@@ -307,7 +319,7 @@ This runs the same scoring algorithm in Python and C++, comparing results to wit
 
 ## Repository Layout
 
-```
+```text
 src/collector/   fanotify_collector.c     (primary: reads/writes + content)
                  fanotify_fid_collector.c (worked example: rename/delete/create)
                  inotify_demo.c           (teaching comparison)
@@ -343,6 +355,7 @@ Yes, with the `--stop` flag it can pause suspicious processes. Review `docs/SAFE
 ### How do I deploy this?
 
 This is a research project with a teaching focus. For production use, consider:
+
 - Integrating with existing security monitoring (SIEM)
 - Tuning on your organization's specific baseline
 - Combining with other detection methods
