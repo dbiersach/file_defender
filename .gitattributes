@@ -1,0 +1,33 @@
+# Standardize line endings. This project is edited on Windows but runs on
+# Linux, so text files are stored and checked out with LF. This is essential
+# for the shell scripts: a CRLF shebang line breaks execution on Linux.
+* text=auto eol=lf
+
+# Source and config (explicit)
+*.c    text eol=lf
+*.h    text eol=lf
+*.cpp  text eol=lf
+*.hpp  text eol=lf
+*.py   text eol=lf
+*.sh   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.txt  text eol=lf
+*.csv  text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt   text eol=lf
+*.code-workspace text eol=lf
+.gitignore       text eol=lf
+.gitattributes   text eol=lf
+.python-version  text eol=lf
+
+# Windows-only helper keeps CRLF
+*.ps1 text eol=crlf
+
+# Binary assets (no conversion)
+*.png  binary
+*.jpg  binary
+*.pdf  binary
+*.joblib binary
