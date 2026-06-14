@@ -1,0 +1,14 @@
+timestamp_seconds,user_name,process_name,process_id,operation,path,bytes,byte_entropy
+0,dave,code,1001,open,/home/dave/Documents/notes.txt,0,0.00
+1,dave,code,1001,read,/home/dave/Documents/notes.txt,4096,4.20
+3,dave,libreoffice,1002,open,/home/dave/Documents/budget.ods,0,0.00
+4,dave,libreoffice,1002,write,/home/dave/Documents/budget.ods,8192,4.80
+12,dave,firefox,1003,write,/home/dave/Downloads/report.pdf,1048576,5.10
+20,dave,unknown_process,4242,open,/home/dave/Documents/tax/a.docx,0,0.00
+21,dave,unknown_process,4242,read,/home/dave/Documents/tax/a.docx,8192,4.60
+22,dave,unknown_process,4242,write,/home/dave/Documents/tax/a.locked,8192,7.90
+23,dave,unknown_process,4242,rename,/home/dave/Documents/tax/a.docx,0,0.00
+24,dave,unknown_process,4242,read,/home/dave/Pictures/family.jpg,1048576,6.20
+25,dave,unknown_process,4242,write,/home/dave/Pictures/family.jpg.locked,1048576,7.95
+26,dave,unknown_process,4242,read,/home/dave/Desktop/todo.txt,2048,4.10
+27,dave,unknown_process,4242,write,/home/dave/Desktop/todo.txt.locked,2048,7.80

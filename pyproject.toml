@@ -1,0 +1,29 @@
+[project]
+name = "file-defender"
+version = "0.1.0"
+description = "AI/ML file-system behavior anomaly detection for ransomware defense"
+readme = "README.md"
+
+# Linux Mint 22.3 ships Python 3.12.
+requires-python = ">=3.12,<3.13"
+
+# Minimal dependencies for the offline ML pipeline (training + verification).
+# The collector and daemon are C/C++ and are built with CMake, not uv.
+dependencies = [
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "joblib",
+    "ruff",
+]
+
+[tool.uv]
+# Virtual project: there is no Python package to build. The scripts in python/
+# are run directly.
+package = false
+
+[tool.ruff]
+lint.extend-select = ["I", "C4", "ISC", "SIM", "TCH"]
+lint.ignore = []
+show-fixes = true
+target-version = "py312"

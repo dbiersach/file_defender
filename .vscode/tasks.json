@@ -1,0 +1,49 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "cmake-configure",
+            "type": "shell",
+            "command": "cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug",
+            "problemMatcher": []
+        },
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "cmake --build build -j$(nproc)",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "dependsOn": "cmake-configure"
+        },
+        {
+            "label": "generate-baseline",
+            "type": "shell",
+            "command": "uv run python python/simulate_activity.py --write-events testdata/benign_baseline.csv",
+            "problemMatcher": []
+        },
+        {
+            "label": "train-model",
+            "type": "shell",
+            "command": "uv run python python/train_isolation_forest.py --events testdata/benign_baseline.csv --out models/model.json --joblib models/model.joblib",
+            "problemMatcher": []
+        },
+        {
+            "label": "verify-parity",
+            "type": "shell",
+            "command": "uv run python python/verify_parity.py",
+            "problemMatcher": []
+        },
+        {
+            "label": "run-demo (sample CSV)",
+            "type": "shell",
+            "command": "./build/file_defender_daemon --events testdata/sample_events.csv --model models/model.json",
+            "problemMatcher": [],
+            "dependsOn": "build"
+        }
+    ]
+}

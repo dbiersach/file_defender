@@ -1,0 +1,37 @@
+{
+    // C / C++: use clangd for IntelliSense and formatting. clangd reads
+    // build/compile_commands.json, which CMake generates. Do NOT also enable the
+    // Microsoft C/C++ (cpptools) IntelliSense engine; the two conflict.
+    "clangd.arguments": [
+        "--background-index",
+        "--clang-tidy",
+        "--completion-style=detailed",
+        "--header-insertion=never"
+    ],
+    "[c]": {
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+    },
+    "[cpp]": {
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+    },
+    "files.associations": {
+        "*.bpf.c": "c"
+    },
+
+    // CMake
+    "cmake.configureOnOpen": true,
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+
+    // Python: use Ruff for formatting and import organizing.
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.codeActionsOnSave": {
+            "source.organizeImports.ruff": "explicit"
+        }
+    },
+    "python.terminal.activateEnvironment": true,
+
+    // Shared editor behavior
+    "editor.formatOnSave": true,
+    "files.autoSave": "afterDelay"
+}

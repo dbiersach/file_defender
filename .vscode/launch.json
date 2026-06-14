@@ -1,0 +1,34 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug daemon (sample CSV)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/file_defender_daemon",
+            "args": [
+                "--events",
+                "testdata/sample_events.csv",
+                "--model",
+                "models/model.json"
+            ],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "build"
+        },
+        {
+            "name": "Debug fanotify collector (needs sudo)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/fanotify_collector",
+            "args": [
+                "${env:HOME}/Documents"
+            ],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "build",
+            "initCommands": [
+                "// fanotify needs root. Launch lldb-server with sudo, or run the",
+                "// collector from a sudo terminal and debug the daemon instead."
+            ]
+        }
+    ]
+}

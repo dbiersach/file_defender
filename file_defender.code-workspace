@@ -1,0 +1,52 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "clangd.arguments": [
+            "--background-index",
+            "--clang-tidy",
+            "--completion-style=detailed",
+            "--header-insertion=never"
+        ],
+        "[c]": {
+            "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+        },
+        "[cpp]": {
+            "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+        },
+        "files.associations": {
+            "*.bpf.c": "c"
+        },
+        "cmake.configureOnOpen": true,
+        "cmake.buildDirectory": "${workspaceFolder}/build",
+        "[python]": {
+            "editor.defaultFormatter": "charliermarsh.ruff",
+            "editor.codeActionsOnSave": {
+                "source.organizeImports.ruff": "explicit"
+            }
+        },
+        "python.terminal.activateEnvironment": true,
+        "editor.formatOnSave": true,
+        "files.autoSave": "afterDelay"
+    },
+    "extensions": {
+        "recommendations": [
+            "llvm-vs-code-extensions.vscode-clangd",
+            "vadimcn.vscode-lldb",
+            "ms-vscode.cmake-tools",
+            "twxs.cmake",
+            "ms-python.python",
+            "ms-python.vscode-pylance",
+            "charliermarsh.ruff",
+            "streetsidesoftware.code-spell-checker",
+            "usernamehw.errorlens",
+            "eamodio.gitlens"
+        ],
+        "unwantedRecommendations": [
+            "ms-vscode.cpptools"
+        ]
+    }
+}

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# CMake / C / C++ build output
+build/
+*.o
+*.obj
+compile_commands.json
+
+# Trained model artifacts (regenerate with python/train_isolation_forest.py)
+models/*.json
+models/*.joblib
+
+# Recorded activity data (private; collect your own)
+data/
+
+# Editor / OS
+.DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json
