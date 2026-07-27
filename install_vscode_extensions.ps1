@@ -1,12 +1,15 @@
-#!/usr/bin/env bash
 # Install the VS Code extensions used by the file_defender workspace.
-# This is the primary script for Linux Mint. Run it from a terminal:
-#   bash install_vscode_extensions.sh
+# This is the Windows mirror of install_vscode_extensions.sh. Run it from a
+# PowerShell prompt:
+#   pwsh -File install_vscode_extensions.ps1
 #
-# The list here must stay in sync with .vscode/extensions.json.
+# Only the Python half of this project builds on Windows (the fanotify/inotify
+# collectors and the daemon are Linux-only), but the editor tooling is the same
+# so the two scripts install the same list. Keep both in sync with
+# .vscode/extensions.json.
 
 # Silence the Node deprecation warnings the VS Code CLI prints on every call.
-export NODE_NO_WARNINGS=1
+$env:NODE_NO_WARNINGS = "1"
 
 # C / C++ development with clangd (IntelliSense) and LLDB (debugging)
 code --install-extension llvm-vs-code-extensions.vscode-clangd --force
