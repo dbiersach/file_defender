@@ -1,30 +1,70 @@
-# Standardize line endings. This project is edited on Windows but runs on
-# Linux, so text files are stored and checked out with LF. This is essential
-# for the shell scripts: a CRLF shebang line breaks execution on Linux.
+# Standardize line endings. This project is edited on Windows but builds and
+# runs on Linux, so text files are stored and checked out with LF. This is
+# essential for the shell scripts: a CRLF shebang line breaks execution on
+# Linux with a misleading "bad interpreter" error.
 * text=auto eol=lf
 
-# Source and config (explicit)
-*.c    text eol=lf
-*.h    text eol=lf
-*.cpp  text eol=lf
-*.hpp  text eol=lf
-*.py   text eol=lf
-*.sh   text eol=lf
-*.md   text eol=lf
+# C / C++ sources. The diff=cpp driver makes `git diff` show the enclosing
+# function name in the hunk header instead of a bare line number.
+*.c    text eol=lf diff=cpp
+*.h    text eol=lf diff=cpp
+*.cpp  text eol=lf diff=cpp
+*.hpp  text eol=lf diff=cpp
+
+# Python sources and notebooks.
+*.py    text eol=lf diff=python
+*.ipynb text eol=lf
+
+# Shell scripts must be LF or Linux refuses to run them.
+*.sh text eol=lf
+
+# Build and project configuration.
+CMakeLists.txt   text eol=lf
+*.cmake          text eol=lf
+*.code-workspace text eol=lf
 *.json text eol=lf
 *.toml text eol=lf
+*.cfg  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
 *.lock text eol=lf
-*.txt  text eol=lf
-*.csv  text eol=lf
-*.cmake text eol=lf
-CMakeLists.txt   text eol=lf
-*.code-workspace text eol=lf
-.gitignore       text eol=lf
-.gitattributes   text eol=lf
-.python-version  text eol=lf
 
-# Binary assets (no conversion)
-*.png  binary
-*.jpg  binary
-*.pdf  binary
-*.joblib binary
+# Documentation and data.
+*.md  text eol=lf
+*.txt text eol=lf
+*.csv text eol=lf
+
+# Dotfiles that carry no extension for `text=auto` to key on.
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+.python-version text eol=lf
+
+# Windows batch files are the one exception: cmd.exe mis-parses labels and
+# multi-line blocks when the file uses LF, so force CRLF on checkout.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# PowerShell reads LF fine on both Windows PowerShell and PowerShell 7.
+*.ps1 text eol=lf
+
+# Binary assets. Never run line-ending or diff conversion on these.
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.pdf     binary
+*.zip     binary
+*.gz      binary
+*.wav     binary
+*.mp3     binary
+*.ttf     binary
+*.otf     binary
+*.npy     binary
+*.npz     binary
+*.parquet binary
+*.joblib  binary
+
+# Collapse the generated lockfile in GitHub diffs and exclude it from the
+# repository language statistics.
+uv.lock linguist-generated=true
