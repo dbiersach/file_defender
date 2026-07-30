@@ -44,10 +44,22 @@ def average_path_length(n: float) -> float:
 
 
 def score_from_json(model: dict, x_raw: np.ndarray) -> np.ndarray:
-    """Reproduce the Isolation Forest anomaly score from the exported JSON.
+    """
+    Reproduce the Isolation Forest anomaly score from the exported JSON.
 
     This is the reference for the C++ implementation in anomaly_model.cpp.
-    Returns scores in (0, 1); higher means more anomalous.
+
+    Parameters
+    ----------
+    model : dict
+        The parsed model JSON, holding the scaler, max_samples, and every tree.
+    x_raw : np.ndarray
+        Unscaled feature rows, shape (n_samples, n_features).
+
+    Returns
+    -------
+    np.ndarray
+        One score per row in (0, 1); higher means more anomalous.
     """
     mean = np.asarray(model["scaler_mean"])
     scale = np.asarray(model["scaler_scale"])

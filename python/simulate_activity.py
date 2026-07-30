@@ -26,7 +26,24 @@ from features import EVENT_COLUMNS, FEATURE_COLUMNS
 def generate_feature_dataset(
     n_normal: int = 400, n_ransomware: int = 25, seed: int = 42
 ) -> pd.DataFrame:
-    """Return a DataFrame of feature rows with an extra 'label' column."""
+    """
+    Generate labeled feature rows for two behavioral clusters.
+
+    Parameters
+    ----------
+    n_normal : int
+        Number of benign feature rows to draw.
+    n_ransomware : int
+        Number of ransomware feature rows to draw.
+    seed : int
+        Seed for the random generator, so the dataset is reproducible.
+
+    Returns
+    -------
+    pd.DataFrame
+        Rows with the columns in FEATURE_COLUMNS plus a 'label' column holding
+        either "normal" or "ransomware".
+    """
     rng = np.random.default_rng(seed)
 
     normal = pd.DataFrame(
@@ -70,12 +87,25 @@ _BENIGN_PROFILES = [
 
 
 def generate_benign_event_log(seed: int = 123, n_events: int = 1200) -> pd.DataFrame:
-    """Create a realistic benign raw-event log (columns = EVENT_COLUMNS).
+    """
+    Create a benign raw-event log of ordinary desktop activity.
 
     Used to train a model the way it will really be used: on a baseline of
     ordinary activity recorded from the collector. Each process stays in its own
     directory with normal-entropy content, so a later ransomware burst (many
     directories, many extensions, high entropy) stands out.
+
+    Parameters
+    ----------
+    seed : int
+        Seed for the random generator, so the log is reproducible.
+    n_events : int
+        Number of events to generate.
+
+    Returns
+    -------
+    pd.DataFrame
+        Raw events with the columns in EVENT_COLUMNS.
     """
     rng = np.random.default_rng(seed)
     rows: list[dict[str, object]] = []
@@ -137,19 +167,37 @@ _RANSOMWARE_TARGETS = [
 
 
 def generate_attack_scenario(seed: int = 7) -> pd.DataFrame:
-    """Build a realistic mixed event log: several benign processes plus one
-    ransomware process, for an end-to-end detection demo.
+    """
+    Build a mixed event log of benign processes plus one ransomware process.
 
     Benign processes (code, libreoffice, firefox) work quietly in their own
     directories at normal entropy. Partway through, a 'cryptor' process sweeps
     the home directory: for each file it reads the original, writes a
-    high-entropy '.locked' copy, then deletes the original - across many
+    high-entropy '.locked' copy, then deletes the original, across many
     directories and file types in a few seconds.
+
+    Parameters
+    ----------
+    seed : int
+        Seed for the random generator, so the scenario is reproducible.
+
+    Returns
+    -------
+    pd.DataFrame
+        Raw events with the columns in EVENT_COLUMNS, sorted by timestamp.
     """
     rng = np.random.default_rng(seed)
     rows: list[dict[str, object]] = []
 
-    def add(t, name, pid, op, path, size_bytes=0, entropy=0.0):
+    def add(
+        t: float,
+        name: str,
+        pid: int,
+        op: str,
+        path: str,
+        size_bytes: int = 0,
+        entropy: float = 0.0,
+    ) -> None:
         rows.append(
             {
                 "timestamp_seconds": round(float(t), 3),

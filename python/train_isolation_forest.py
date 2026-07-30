@@ -35,7 +35,20 @@ from sklearn.preprocessing import StandardScaler
 
 
 def load_training_features(args: argparse.Namespace) -> pd.DataFrame:
-    """Return a DataFrame of FEATURE_COLUMNS rows to train on."""
+    """
+    Load the benign feature rows to train on.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command line, carrying exactly one of the data-source flags
+        (--synthetic, --events, or --features) plus the rolling window length.
+
+    Returns
+    -------
+    pd.DataFrame
+        Rows with the columns in FEATURE_COLUMNS.
+    """
     if args.synthetic:
         data = generate_feature_dataset(seed=42)
         # Train only on benign behavior (the core idea of the project).
@@ -54,7 +67,25 @@ def export_model_json(
     recommended_threshold: float,
     out_path: Path,
 ) -> None:
-    """Serialize the scaler and every tree to the JSON the C++ daemon reads."""
+    """
+    Serialize the scaler and every tree to the JSON the C++ daemon reads.
+
+    Parameters
+    ----------
+    scaler : StandardScaler
+        The fitted feature scaler, whose mean and scale the daemon reapplies.
+    model : IsolationForest
+        The fitted forest, whose every tree is flattened into arrays.
+    recommended_threshold : float
+        Alert threshold derived from the benign training scores.
+    out_path : Path
+        Destination file. Parent directories are created if needed.
+
+    Returns
+    -------
+    None
+        The model is written to `out_path` as JSON.
+    """
     trees = []
     for estimator in model.estimators_:
         tree = estimator.tree_

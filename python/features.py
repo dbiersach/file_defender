@@ -46,7 +46,8 @@ EVENT_COLUMNS: list[str] = [
 def build_feature_rows(
     events: pd.DataFrame, window_seconds: float = 10.0
 ) -> pd.DataFrame:
-    """Turn a raw event log into one feature row per event, per process.
+    """
+    Turn a raw event log into one feature row per event, per process.
 
     This mirrors the C++ daemon exactly: each process has its own rolling
     window, and after every event we recompute the window's features. Rates are
