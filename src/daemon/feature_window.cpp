@@ -1,3 +1,19 @@
+/*
+ * FeatureWindow: turns a stream of single events into the six behavioral
+ * features the model scores.
+ *
+ * One event on its own says almost nothing. A process writing one file at
+ * entropy 4.8 is ordinary; a process writing forty files per second at entropy
+ * 7.9 across fifteen directories is not. So the daemon keeps a short rolling
+ * window of recent events per process and summarizes it into six numbers.
+ *
+ * The definitions here MUST match python/features.py, because the model is
+ * trained on features computed by that file and scored on features computed by
+ * this one. If the two ever disagree, the daemon is scoring a different
+ * quantity than the model learned. python/verify_parity.py exists to catch
+ * exactly that class of mistake.
+ */
+
 #include "feature_window.hpp"
 
 #include <algorithm>

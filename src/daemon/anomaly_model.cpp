@@ -1,3 +1,24 @@
+/*
+ * AnomalyModel implementation: scoring a feature vector against the trained
+ * Isolation Forest, with no Python and no ML library at runtime.
+ *
+ * The model arrives as JSON from python/train_isolation_forest.py: every tree
+ * flattened into arrays, plus the feature scaler and the alert threshold. All
+ * this file does is standardize the input, walk each tree to find how deep the
+ * point lands, average those depths, and convert the average into a score.
+ *
+ * The reason a short average depth means "anomalous" is the central idea of the
+ * algorithm: a point unlike anything in the training data gets separated from
+ * the rest by only a few random cuts, while a point buried in the crowd needs
+ * many. The conversion from mean depth to a score in (0, 1) is
+ *
+ *   s(x) = 2 ^ ( -mean_depth / c(max_samples) )
+ *
+ * Keeping this arithmetic identical to scikit-learn's is what makes the trained
+ * threshold meaningful here. python/verify_parity.py proves the two agree to
+ * within 1e-9.
+ */
+
 #include "anomaly_model.hpp"
 
 #include <cmath>

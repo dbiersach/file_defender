@@ -1,5 +1,16 @@
 #pragma once
 
+/*
+ * FeatureWindow: the rolling per-process window and the six-number feature
+ * vector computed from it.
+ *
+ * FeatureVector's member order is the contract with the trained model. The
+ * exported JSON lists its feature_columns in this same order, and
+ * AnomalyModel::score indexes the vector positionally, so reordering these
+ * members silently mis-scores every window. See python/features.py for the
+ * canonical definition.
+ */
+
 #include "file_event.hpp"
 
 #include <deque>
