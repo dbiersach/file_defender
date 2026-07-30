@@ -1,6 +1,6 @@
 # File Defender
 
-**Utilizing AI in Ransomware Detection via Filesystem Behavior Anomaly Detection** — a defensive cybersecurity research project that detects ransomware by analyzing filesystem behavior anomalies using machine learning (Isolation Forest).
+**Utilizing AI in Ransomware Detection via Filesystem Behavior Anomaly Detection** - a defensive cybersecurity research project that detects ransomware by analyzing filesystem behavior anomalies using machine learning (Isolation Forest).
 
 **This project is defensive.** It observes file activity and raises alerts. It contains no ransomware and never encrypts, corrupts, or mass-modifies files. See [`docs/SAFETY_AND_SCOPE.md`](docs/SAFETY_AND_SCOPE.md).
 
@@ -14,6 +14,15 @@ Ransomware typically behaves very differently from normal user activity:
 - **Sweeping across file extensions** and directories (trying to encrypt everything)
 
 File Defender watches these behavioral patterns and alerts when a process deviates from normal user behavior. It learns what "normal" looks like from benign activity, so it needs no ransomware samples to detect attacks.
+
+## Documentation
+
+| Document | What it covers |
+| --- | --- |
+| [`docs/SAFETY_AND_SCOPE.md`](docs/SAFETY_AND_SCOPE.md) | What this project will and will not do, and the ethics of automatic response. Read this first. |
+| [`docs/ENTROPY_AND_ML_EXPLAINED.md`](docs/ENTROPY_AND_ML_EXPLAINED.md) | Step-by-step walkthrough of Shannon entropy and the full pipeline, from raw bytes to an alert. Written for a student meeting information theory for the first time. |
+| [`docs/WHY_ISOLATION_FOREST.md`](docs/WHY_ISOLATION_FOREST.md) | Why Isolation Forest was chosen, where it is genuinely weak, and what the alternatives would cost. |
+| [`docs/POTENTIAL_IMPROVEMENTS.md`](docs/POTENTIAL_IMPROVEMENTS.md) | Three proposed improvements, built as standalone modules and measured against the current detector. Includes the results that did not support the proposal. |
 
 ## How It Works
 
@@ -326,10 +335,37 @@ src/collector/   fanotify_collector.c     (primary: reads/writes + content)
 src/daemon/      main.cpp, feature_window.*, anomaly_model.* (Isolation Forest)
 src/common/      file_event.hpp (shared event schema)
 python/          features, simulator, trainer, parity verifier
+                 (see "Detector Experiments" below for the research modules)
 testdata/        sample_events.csv, attack_scenario.csv (demos),
                  benign_baseline.csv (training)
 models/          trained model output (model.json, model.joblib)
-docs/            SAFETY_AND_SCOPE.md
+docs/            SAFETY_AND_SCOPE.md, ENTROPY_AND_ML_EXPLAINED.md,
+                 WHY_ISOLATION_FOREST.md, POTENTIAL_IMPROVEMENTS.md
+```
+
+### Detector Experiments
+
+These modules sit alongside the working pipeline and never modify it. They exist
+to test whether the current design choices are the right ones. See
+[`docs/POTENTIAL_IMPROVEMENTS.md`](docs/POTENTIAL_IMPROVEMENTS.md) for the
+measured results.
+
+```text
+score_smoother.py               EWMA and CUSUM aggregation over the score stream
+demo_temporal_aggregation.py    attack-pace sweep: what does that aggregation buy?
+baseline_detectors.py           robust z-score and Mahalanobis detectors
+extended_isolation_forest.py    Isolation Forest with oblique cuts
+compare_detectors.py            four-way comparison at one false-positive budget
+evaluation.py                   labeled features, shared thresholds, metrics
+simulate_realistic_baseline.py  a benign baseline hard enough to tell detectors apart
+```
+
+Run any of the three experiments directly:
+
+```bash
+uv run python python/demo_temporal_aggregation.py
+uv run python python/compare_detectors.py
+uv run python python/extended_isolation_forest.py
 ```
 
 ## Common Questions
@@ -346,7 +382,7 @@ File Defender learns what "normal" looks like for your system and flags anomalie
 
 ### What if a legitimate process has high entropy?
 
-This is a potential false positive. Media processing (images, videos), database operations, or compression can produce high entropy. The Isolation Forest learns what's normal in *all six dimensions*—a single high-entropy spike may not be anomalous if other features are typical.
+This is a potential false positive. Media processing (images, videos), database operations, or compression can produce high entropy. The Isolation Forest learns what's normal in *all six dimensions*, so a single high-entropy spike may not be anomalous if other features are typical. [`docs/POTENTIAL_IMPROVEMENTS.md`](docs/POTENTIAL_IMPROVEMENTS.md) measures how well that holds up against `git gc` and a `restic` backup run, which are the hard cases.
 
 ### Can I use this for live protection?
 
@@ -374,6 +410,8 @@ This is a research project with a teaching focus. For production use, consider:
 
 1. **Run the offline demo** - familiarize yourself with the pipeline
 2. **Read the code** - start with `python/features.py` and `src/daemon/feature_window.cpp`
-3. **Modify and experiment** - change thresholds, add features, tune parameters
-4. **Collect your own data** - train on your real workflow
-5. **Deploy cautiously** - understand what it detects before enabling auto-pause
+3. **Understand the entropy math** - [`docs/ENTROPY_AND_ML_EXPLAINED.md`](docs/ENTROPY_AND_ML_EXPLAINED.md) works it through by hand
+4. **Question the model choice** - [`docs/WHY_ISOLATION_FOREST.md`](docs/WHY_ISOLATION_FOREST.md) argues both sides, and [`docs/POTENTIAL_IMPROVEMENTS.md`](docs/POTENTIAL_IMPROVEMENTS.md) measures the alternatives
+5. **Modify and experiment** - change thresholds, add features, tune parameters
+6. **Collect your own data** - train on your real workflow
+7. **Deploy cautiously** - understand what it detects before enabling auto-pause
