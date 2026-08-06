@@ -148,16 +148,11 @@ Instead:
 
 ## Formatting
 
-- Python code must be compatible with:
-  - Ruff
-  - Black
-
+- Python formatting and import order are handled by `ruff format` and
+  `ruff check`. Code must pass `ruff check` with no errors.
 - C and C++ formatting is handled by clang-format via the clangd extension
 - Follow consistent spacing and formatting
 - Avoid overly dense code blocks
-
-Python formatting and import order are handled by `ruff format` and
-`ruff check`. Code must pass `ruff check` with no errors.
 
 ---
 
@@ -258,7 +253,7 @@ Do not open a markdown cell with a bolded run-in sentence such as
 ### Every Code Cell Must Display Output
 
 Never write a code cell that produces no visible output. A cell containing
-only imports, constants, or function definitions gives the student no feedback
+only imports, constants, or function definitions gives the reader no feedback
 that they ran it. It is easy to skip a silent cell and then hit a `NameError`
 in the next one.
 
@@ -268,8 +263,8 @@ exercises what was just defined. Call the new functions on a simple case and
 
 ```python
 # Quick check that the entropy helper works as expected
-h = shannon_entropy(bytes(4096))
-print(f"shannon_entropy(all zeros) = {h:.2f}  (expected 0.00)")
+h = shannon_entropy(bytes(range(256)))
+print(f"entropy of 0..255 = {h:.4f}  (expected 8.0000)")
 ```
 
 This doubles as a worked example and as proof the cell ran.
@@ -308,174 +303,6 @@ Good pattern:
 
 ---
 
-## LaTeX for PowerPoint / Word Equation Editor
-
-When I ask for LaTeX to paste into the **Microsoft 365 Equation Editor**
-(PowerPoint or Word: Insert -> Equation -> type LaTeX -> Convert to Math /
-"build up"), produce **Office-compatible** LaTeX, not general LaTeX. The
-Office build-up engine has stricter delimiter rules than a normal LaTeX
-compiler and supports no packages at all, so expressions that render fine in
-a real LaTeX compiler can "fail miserably" here.
-
-Assume the equation is going into the Equation Editor in **LaTeX input
-mode**, and return the raw source in a code block so it can be copied
-directly.
-
-### Core rule: delimiters must be balanced by count
-
-Office pairs every opening delimiter (`(`, `[`, `|`, `\langle`, `\lfloor`, ...)
-with a matching closer, then builds one auto-sizing bracket object between them.
-An **unmatched opener escapes its group** and swallows surrounding content
-(e.g. it eats across a fraction bar), producing a mangled result.
-
-- Bad: `\frac{\lvert 1}{2}` - lone `\lvert` has no closer; the bar escapes the
-  numerator and wraps the whole fraction.
-- Good: `\frac{|1|}{2}` or `\frac{\left|1\right|}{2}` - balanced.
-
-Office does **not** require the two sides to be the *same glyph* - only that
-they form one matched `\left ... \right` pair. That is what makes
-mixed-delimiter brackets (kets, bras, floors) possible.
-
-### Use `\left ... \right`, not the fixed `\lvert/\rvert` pairs
-
-`\lvert`/`\rvert` (and `\lfloor/\rfloor`, etc.) are **dedicated fixed pairs**:
-`\lvert` is hard-wired to seek a matching `\rvert` and will *not* mate with a
-different closer. So `\lvert\psi\rangle` fails - `\lvert` wants `\rvert`,
-`\rangle` wants `\langle`, and neither finds its partner.
-
-Any bracket whose two sides differ in shape **must** use the generic
-`\left ... \right` mechanism, where `\left`/`\right` open/close with whatever
-glyph follows and only the count has to balance.
-
-### Never use package-dependent macros
-
-Office has no package system. Anything that a normal LaTeX document would
-pull in from `amsmath`, `braket`, or `physics` simply does not exist in the
-build-up engine, and the equation fails.
-
-Never emit these:
-
-```latex
-\ket{\psi}
-\bra{\psi}
-\braket{\phi|\psi}
-\lvert\psi\rangle
-\langle\psi\rvert
-```
-
-Write every bracket out longhand with `\left` and `\right` instead.
-
-### Dirac (bra-ket) notation
-
-| Notation | Office-compatible LaTeX |
-| --- | --- |
-| Ket | `\left\|\psi\right\rangle` |
-| Bra | `\left\langle\psi\right\|` |
-| Inner product | `\left\langle\phi\middle\|\psi\right\rangle` |
-| Matrix element | `\left\langle\phi\middle\|\hat{A}\middle\|\psi\right\rangle` |
-| Ket in a fraction | `\frac{\left\|\psi\right\rangle}{\sqrt{2}}` |
-
-Never write a ket with `\lvert` - always `\left|`.
-
-Use `\middle|` for a bar that sits *inside* a bracket pair, as in an inner
-product or a matrix element. Splitting the same expression into two separate
-pairs, `\left\langle\phi\right|\hat{A}\left|\psi\right\rangle`, also builds
-correctly, but `\middle|` keeps it as one group so every glyph grows to the
-same height.
-
-Keep the delimiters explicit inside fractions, where a lone bar does the most
-damage:
-
-```latex
-\frac{\left\langle\psi\middle|\hat{H}\middle|\psi\right\rangle}
-{\left\langle\psi\middle|\psi\right\rangle}
-```
-
-### Composite states, outer products, and operators
-
-Write a composite ket as one bracket pair:
-
-```latex
-\left|00\right\rangle
-```
-
-Keep both pairs when the product structure is what matters:
-
-```latex
-\left|0\right\rangle\left|1\right\rangle
-```
-
-Write outer products out in full, and wrap the whole outer product in
-parentheses when it acts on a ket. Add the parentheses even where they are
-not mathematically required - they make the operator-action structure
-unambiguous to a reader:
-
-```latex
-(\left|0\right\rangle\left\langle1\right|)\left|0\right\rangle
-```
-
-Preserve that grouping when expanding the operation:
-
-```latex
-(\left|0\right\rangle\left\langle1\right|)\left|0\right\rangle
-=
-\left|0\right\rangle
-\left(\left\langle1\middle|0\right\rangle\right)
-=
-0
-```
-
-Parenthesize a compound operator whenever adjacency could be misread:
-
-```latex
-(\hat{A}+\hat{B})\left|\psi\right\rangle
-```
-
-A single named operator needs no parentheses:
-
-```latex
-\hat{U}\left|\psi\right\rangle
-```
-
-### Tensor products
-
-Use `\otimes` when the tensor product should be explicit:
-
-```latex
-\left|\psi\right\rangle\otimes\left|\phi\right\rangle
-```
-
-Do not silently collapse an explicit tensor product into juxtaposition
-unless a shorter form was requested.
-
-### Other Office gotchas
-
-- Absolute value: `\left|x\right|` (stretchy) or `|x|` (fixed size, fine for
-  short contents).
-- Unsupported LaTeX keywords in Office: `\eqarray`, `\Middle`, `\ldiv`,
-  `\dsmash`. Capital `\Middle` is unsupported; lowercase `\middle` is the one
-  to use. In the rare case it misbehaves, the fallback is all fixed-size
-  brackets with a plain separator, `\langle\phi|\psi\rangle`, which keeps the
-  delimiter count balanced.
-- Recommended reference: Microsoft's "Linear format equations using UnicodeMath
-  and LaTeX in Word" support page.
-
-### Output conventions
-
-When asked for "PowerPoint LaTeX", "Microsoft LaTeX", or "Equation Editor
-LaTeX":
-
-1. Put the copyable source in a fenced `latex` code block, raw and
-   unrendered, so it can be pasted straight into the equation field.
-2. Use explicit `\left ... \right` delimiters and explicit parentheses.
-3. Use no package-dependent commands.
-4. Do not convert the expression to UnicodeMath unless UnicodeMath was
-   specifically requested.
-5. Where practical, also show the equation rendered normally so the result
-   can be checked by eye.
-
----
-
 ## Environment Notes
 
 These are properties of the development machine, not style rules. They are
@@ -494,12 +321,31 @@ or fail with a stale import, with no useful error message.
   `uv run python python/train_isolation_forest.py`. If that succeeds, the
   problem is the extension host, not the code.
 
+See `.claude/skills/machine-environment-notes/SKILL.md` for the fuller
+treatment, including clearing orphaned kernel processes.
+
 ### The daemon and collectors are Linux-only
 
 `fanotify`, `inotify`, and the eBPF program require a Linux kernel. They do not
 build or run on Windows. The Python side (`python/`) is cross-platform and can
 be developed and tested on Windows; the C/C++ side must be built on Linux Mint
 or an equivalent distribution.
+
+---
+
+## Reference Material Loaded On Demand
+
+Two longer references are skills under `.claude/skills/`, so Claude Code loads
+them only when the task calls for them instead of on every session. Other tools
+should read the files directly.
+
+- `.claude/skills/office-latex/SKILL.md` - Office-compatible LaTeX for the
+  Microsoft 365 Equation Editor (PowerPoint and Word), including Dirac
+  bra-ket notation.
+- `.claude/skills/machine-environment-notes/SKILL.md` - diagnosing a script or
+  notebook that hangs or never finishes, clearing orphaned kernel processes,
+  reloading VS Code after a `uv sync`, and why quantum chemistry packages
+  cannot be installed on this machine.
 
 ---
 

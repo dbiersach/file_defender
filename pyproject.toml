@@ -21,8 +21,16 @@ dependencies = [
 # Virtual project: there is no Python package to build. The scripts in python/
 # are run directly.
 package = false
+# Resolve for both target platforms so uv.lock works on the Linux Mint machine
+# the daemon is built on and on the Windows box the Python side is developed on.
+# macOS is not a target: the collectors need fanotify and eBPF.
+required-environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+]
 
 [tool.ruff]
+extend-include = ["*.ipynb"]
 lint.extend-select = ["I", "C4", "ISC", "SIM", "TCH"]
 lint.ignore = []
 show-fixes = true
