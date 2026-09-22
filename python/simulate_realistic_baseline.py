@@ -143,6 +143,9 @@ def _desktop_events(
             operation = str(
                 rng.choice(["open", "read", "write", "close"], p=[0.3, 0.4, 0.2, 0.1])
             )
+            # Entropy contract, shared with simulate_activity.py and the live
+            # collector: open and close carry 0.0; read and write carry the
+            # entropy of the content involved.
             if operation in ("open", "close"):
                 rows.append(_event(t, name, pid, operation, path))
                 continue

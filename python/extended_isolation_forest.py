@@ -46,11 +46,30 @@ That is six multiply-adds instead of one array lookup, on a tree walk that is
 already memory-bound. No new dependency and no ML runtime, so the design
 constraint that motivated Isolation Forest in the first place is preserved.
 
-One real difference: standardization now matters. A monotone per-feature
-rescaling cannot change an axis-aligned split, which is why StandardScaler is
-mathematically a no-op for the standard forest. An oblique cut mixes features,
-so the scale of each feature changes which hyperplanes are reachable. Here the
-scaler is load-bearing, not decorative.
+One real difference: standardization now matters. Shifting and stretching a
+single feature (a positive affine change, which is all StandardScaler does)
+cannot move an axis-aligned split relative to the data, which is why the
+scaler changes nothing for the standard forest in exact arithmetic. An oblique
+cut mixes features, so the scale of each feature changes how likely each
+hyperplane direction is to be drawn. Here the scaler is load-bearing, not
+decorative.
+
+Two things this implementation does NOT claim:
+
+  - The split position is not "uniform along the normal direction". A point
+    is drawn uniformly inside the node's bounding box and then projected onto
+    the normal vector. Projecting a box onto a diagonal line piles up values
+    in the middle (the sum of two uniform numbers has a triangular shape), so
+    cuts near the center of the box are more likely than cuts near its edges.
+    That matches the Extended Isolation Forest paper; it is simply a different
+    rule from the standard forest's uniform scalar threshold.
+  - `extension_level=0` gives axis-aligned cuts, but it is NOT a bit-for-bit
+    copy of scikit-learn's tree grower. The retry rule below is the concrete
+    difference: with one varying feature and five constant ones, a single
+    attempt picks a constant feature 5 times in 6, so all ten attempts fail
+    with probability (5/6)^10, about 16%, and the node becomes a leaf even
+    though a valid split existed. scikit-learn skips constant features
+    instead. Treat level 0 as "the axis-aligned variant of this code".
 
 Run this file directly for a self-check that also proves the JSON export scores
 identically to the in-memory model, in the spirit of `verify_parity.py`:
@@ -197,8 +216,11 @@ class ExtendedIsolationForest:
     extension_level : int | None
         How many features a cut may mix. `None` means fully extended
         (`n_features - 1`), which is the usual choice. Setting it to 0 makes
-        every cut use a single feature, reproducing the standard algorithm, so
-        this parameter interpolates between the two designs.
+        every cut use a single feature, which gives an axis-aligned variant of
+        this grower. It is close to the standard algorithm but not identical
+        to scikit-learn's (see the module docstring for the retry-rule
+        difference), so use it as a dial between the two designs, not as a
+        stand-in for scikit-learn.
     random_state : int
         Seed, so results are reproducible in the way the rest of the project
         expects.
@@ -268,8 +290,17 @@ class ExtendedIsolationForest:
         if np.all(high - low <= 0.0):
             return node_id  # every point here is identical; nothing to cut
 
-        # A random intercept can occasionally leave all points on one side. Try
-        # a few times before giving up and leaving this node as a leaf.
+        # A random cut can occasionally leave all points on one side. Try a few
+        # times before giving up and leaving this node as a leaf.
+        #
+        # Giving up is not free. The leaf then holds several points at a
+        # shallow depth, and scoring adds the c(n) estimate for them instead
+        # of the depth real cuts would have produced. Whether that makes a
+        # query point look more or less normal than a fully grown branch
+        # would depends on where the point sits, so no direction is claimed
+        # here. What IS known is how often it happens: with `extension_level`
+        # 0 and k constant features out of n, each attempt fails with
+        # probability k/n, so all ten fail with probability (k/n)^10.
         for _ in range(10):
             normal = self._random_normal(rng)
             if normal is None:

@@ -117,6 +117,72 @@ def export_model_json(
     out_path.write_text(json.dumps(export), encoding="utf-8")
 
 
+def report_unused_features(model: IsolationForest, x: np.ndarray) -> None:
+    """
+    Print which features the fitted forest actually splits on, and warn.
+
+    A six-column feature vector does not guarantee a six-feature model. If no
+    tree in the forest splits on a feature, the finished forest is blind to
+    it: you could set it to a million at scoring time and the score would not
+    move. That happened to the model shipped with this project, so this check
+    runs after every training run and says so out loud.
+
+    The usual cause is a feature that never varies in the training data, and
+    the warning says so when that is what the data shows. A forest can also
+    skip a feature that does vary, simply by chance in a small forest, so the
+    two facts are reported separately rather than assumed to be the same.
+
+    Parameters
+    ----------
+    model : IsolationForest
+        The fitted forest.
+    x : np.ndarray
+        The raw training features the forest was fitted on, one row per
+        window, columns in FEATURE_COLUMNS order.
+
+    Returns
+    -------
+    None
+        Prints one line per feature. Prints a warning for any feature that no
+        tree in the forest splits on.
+    """
+    used: set[int] = set()
+    for estimator in model.estimators_:
+        tree = estimator.tree_
+        for feature, left in zip(tree.feature, tree.children_left):
+            if left != -1:
+                used.add(int(feature))
+
+    constant = [
+        index
+        for index in range(x.shape[1])
+        if float(x[:, index].max() - x[:, index].min()) == 0.0
+    ]
+
+    print("  features the forest actually splits on:")
+    for index, name in enumerate(FEATURE_COLUMNS):
+        mark = "used" if index in used else "NEVER USED"
+        extra = "  (constant in the training data)" if index in constant else ""
+        print(f"    [{index}] {name:<24} {mark}{extra}")
+
+    unused = [i for i in range(len(FEATURE_COLUMNS)) if i not in used]
+    if unused:
+        names = ", ".join(FEATURE_COLUMNS[i] for i in unused)
+        print(f"  WARNING: no tree splits on {names}, so the model cannot react to it.")
+        if all(i in constant for i in unused):
+            print(
+                "  Cause: those features have the same value in every training"
+                " row, so there was nothing to split on. Train on a baseline"
+                " where they vary if you need them."
+            )
+        else:
+            print(
+                "  At least one of them does vary in the training data, so the"
+                " forest skipped it by chance. More trees, or a larger"
+                " subsample, would usually pick it up."
+            )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -166,9 +232,11 @@ def main() -> None:
     ).fit(x_scaled)
 
     # Anomaly scores on the benign training set. The alert threshold is the
-    # (1 - max_fpr) percentile of these scores: by construction at most max_fpr
-    # of benign windows will exceed it, while genuinely anomalous activity
-    # (which the model has never seen) scores much higher.
+    # (1 - max_fpr) percentile of these scores. That aims the threshold at the
+    # top max_fpr of the windows the model has seen; it is a calibration rule,
+    # not a promise about future windows. On a second benign session the
+    # measured rate can be higher (docs/EXPERIMENTS_AND_FINDINGS.md saw 1.15%
+    # against a 0.5% target with two noisy processes excluded).
     anomaly_scores = -model.score_samples(x_scaled)
     recommended_threshold = float(np.quantile(anomaly_scores, 1.0 - args.max_fpr))
 
@@ -178,6 +246,7 @@ def main() -> None:
 
     print(f"Trained on {len(x)} benign feature rows.")
     print(f"  trees           : {args.trees}")
+    report_unused_features(model, x)
     print(f"  train score min : {anomaly_scores.min():.4f}")
     print(f"  train score max : {anomaly_scores.max():.4f}")
     print(f"  target max FPR  : {args.max_fpr:.3%}")

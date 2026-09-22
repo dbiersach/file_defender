@@ -164,8 +164,15 @@ The six behavioral features are defined in **three** places that MUST agree:
 2. `src/daemon/feature_window.cpp` (live scoring)
 3. `python/simulate_activity.py` (synthetic data)
 
-If you change a feature, change it in all three and re-run
-`python/verify_parity.py`.
+If you change a feature, change it in all three and then run both parity
+checks:
+
+- `uv run python python/verify_parity.py` (any machine) checks that the
+  exported JSON scores the same way scikit-learn does. It does NOT run C++
+  and does NOT compare feature extraction.
+- `uv run python python/verify_cpp_parity.py` (Linux, after a build) runs the
+  real daemon and compares its six features and its score against Python,
+  event by event. This is the check that catches a feature mismatch.
 
 ---
 

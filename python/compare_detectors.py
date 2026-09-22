@@ -104,10 +104,12 @@ class DetectorSuite:
         max_samples = min(256, len(training_features))
 
         # The standard forest and the extended forest both score standardized
-        # input. For the standard forest that is cosmetic, because axis-aligned
-        # splits are invariant under a monotone per-feature rescaling. For the
-        # extended forest it is load-bearing, because an oblique cut mixes
-        # features and therefore depends on their relative scales.
+        # input. For the standard forest that is cosmetic: an axis-aligned
+        # split lands in the same place whether a feature is measured in its
+        # raw units or shifted and stretched (a positive affine change, which
+        # is all StandardScaler does). For the extended forest it matters,
+        # because an oblique cut mixes features, so their relative scales
+        # change which hyperplanes are likely to be drawn.
         self.scaler = StandardScaler().fit(training_features)
         scaled = self.scaler.transform(training_features)
 
@@ -122,9 +124,11 @@ class DetectorSuite:
             n_estimators=trees, max_samples=max_samples, random_state=42
         ).fit(scaled)
 
-        # The two baselines work on raw features. Neither needs a scaler: the
-        # z-score divides by a per-feature scale by construction, and the
-        # Mahalanobis distance absorbs the covariance.
+        # The two baselines work on raw features. The z-score divides each
+        # feature by its own scale, so scaling would change nothing. The
+        # Mahalanobis detector is fitted on raw features by choice: its
+        # Ledoit-Wolf shrinkage is not perfectly scale-free, so "raw" is a
+        # decision here, not a mathematical guarantee.
         self.zscore = RobustZScoreDetector(one_sided=True).fit(training_features)
         self.mahalanobis = MahalanobisDetector().fit(training_features)
 
@@ -184,8 +188,15 @@ def blind_spot_probe(
     from the median window with one of them pushed high and the other pushed
     low. Every coordinate of that probe is inside the benign range, so a
     detector that looks at features one at a time sees nothing unusual. The
-    combination, however, never occurs in training, which is exactly the "ghost
-    region" an axis-aligned isolation tree cannot fence off.
+    combination, however, never occurs in training, which is the "ghost
+    region" that axis-aligned isolation trees tend to fence off poorly.
+
+    Read this as a geometric diagnostic, not as a realistic attack. The probe
+    is a point in feature space that a real event log may not be able to
+    produce. For example, writes are a subset of events, so a window with more
+    writes per second than events per second is impossible. The probe shows how
+    each detector responds to an unobserved combination; it does not show that
+    ransomware could hide there.
 
     Parameters
     ----------
@@ -238,6 +249,18 @@ def blind_spot_probe(
     )
 
     probes = pd.DataFrame([probe_a, probe_b], columns=FEATURE_COLUMNS)
+
+    # Say plainly when a probe could never come from a real event log.
+    for label, probe in (("A", probe_a), ("B", probe_b)):
+        events_index = FEATURE_COLUMNS.index("events_per_second")
+        writes_index = FEATURE_COLUMNS.index("writes_per_second")
+        if probe[writes_index] > probe[events_index]:
+            print(
+                f"Probe {label} has writes/s {probe[writes_index]:.2f} above "
+                f"events/s {probe[events_index]:.2f}. No real window can do that, "
+                "so treat this probe as a geometric test only."
+            )
+
     scores = suite.scores(probes)
 
     records = []
@@ -267,6 +290,61 @@ def explain_worst_window(
     return FEATURE_COLUMNS[column], float(z[row, column])
 
 
+def median_files_lost(
+    suite: DetectorSuite,
+    thresholds: dict[str, float],
+    benign_rows: pd.DataFrame,
+    paces: list[float],
+    seeds: list[int],
+) -> pd.DataFrame:
+    """
+    Median files lost per detector, across several attacker seeds, per pace.
+
+    A single attacker run can get lucky or unlucky with one loud window, so
+    the docs quote the median over several seeds. This is the function that
+    produces that table, so the number in the document comes from a command
+    anyone can rerun.
+
+    Parameters
+    ----------
+    suite : DetectorSuite
+        The fitted detectors.
+    thresholds : dict[str, float]
+        Each detector's alert threshold.
+    benign_rows : pd.DataFrame
+        Held-out benign feature rows, mixed in with every attack run.
+    paces : list[float]
+        Encryption paces to test, in files per minute.
+    seeds : list[int]
+        Attacker seeds. The median across them is reported.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per detector, one column per pace, holding the median number
+        of files written before the first alert ("all" if never alerted).
+    """
+    table: dict[str, dict[str, object]] = {}
+    for pace in paces:
+        lost_by_detector: dict[str, list[int]] = {}
+        for seed in seeds:
+            attack_rows = build_labeled_features(generate_paced_attack(pace, seed=seed))
+            test_rows = pd.concat([benign_rows, attack_rows], ignore_index=True)
+            test_scores = suite.scores(test_rows)
+            total_files = int((attack_rows["operation"] == "write").sum())
+            for name, values in test_scores.items():
+                report = evaluate_detector(name, values, test_rows, thresholds[name])
+                lost = total_files if report.files_lost is None else report.files_lost
+                if report.detection_seconds is None:
+                    lost = total_files
+                lost_by_detector.setdefault(name, []).append(lost)
+        for name, losses in lost_by_detector.items():
+            table.setdefault(name, {"detector": name})[f"{pace:g}/min"] = int(
+                np.median(losses)
+            )
+    return pd.DataFrame(list(table.values()))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--minutes", type=float, default=90.0, help="baseline length")
@@ -276,6 +354,20 @@ def main() -> None:
         type=float,
         default=0.005,
         help="shared target false-positive rate (default 0.5%%)",
+    )
+    parser.add_argument(
+        "--paces",
+        type=float,
+        nargs="+",
+        default=TEST_PACES,
+        help="attack paces in files per minute for the detailed tables",
+    )
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        default=1,
+        help="attacker seeds per pace for the median files-lost table "
+        "(1 skips that table; the docs use 5)",
     )
     args = parser.parse_args()
 
@@ -302,7 +394,7 @@ def main() -> None:
         generate_baseline_event_log(seed=555, duration_minutes=args.minutes)
     )
 
-    for pace in TEST_PACES:
+    for pace in args.paces:
         attack_rows = build_labeled_features(generate_paced_attack(pace, seed=5))
         test_rows = pd.concat([benign_rows, attack_rows], ignore_index=True)
         test_scores = suite.scores(test_rows)
@@ -328,8 +420,19 @@ def main() -> None:
             names = report.flagged_benign_processes or ["none"]
             print(f"  {report.name:<22} {', '.join(names)}")
 
+    if args.seeds > 1:
+        seeds = list(range(5, 5 + args.seeds))
+        print(f"\n{'=' * 104}")
+        print(f"MEDIAN FILES LOST ACROSS {args.seeds} ATTACKER SEEDS (lower is better)")
+        print(f"{'=' * 104}")
+        print(
+            median_files_lost(
+                suite, thresholds, benign_rows, args.paces, seeds
+            ).to_string(index=False)
+        )
+
     print(f"\n{'=' * 104}")
-    print("AXIS-ALIGNED BLIND SPOT PROBE")
+    print("AXIS-ALIGNED BLIND SPOT PROBE (a geometric test, not a realistic attack)")
     print(f"{'=' * 104}")
     print(blind_spot_probe(suite, thresholds).to_string(index=False))
 

@@ -1,6 +1,8 @@
 # File Defender
 
-**Utilizing AI in Ransomware Detection via Filesystem Behavior Anomaly Detection** - a defensive cybersecurity research project that detects ransomware by analyzing filesystem behavior anomalies using machine learning (Isolation Forest).
+File Defender is a defensive cybersecurity research project. It uses a
+machine-learning method called Isolation Forest to detect ransomware by
+looking for unusual patterns in file activity.
 
 **This project is defensive.** It observes file activity and raises alerts. It contains no ransomware and never encrypts, corrupts, or mass-modifies files. See [`docs/SAFETY_AND_SCOPE.md`](docs/SAFETY_AND_SCOPE.md).
 
@@ -13,7 +15,52 @@ Ransomware typically behaves very differently from normal user activity:
 - **Repeated rename/delete cycles** (e.g., renaming files to `.locked`)
 - **Sweeping across file extensions** and directories (trying to encrypt everything)
 
-File Defender watches these behavioral patterns and alerts when a process deviates from normal user behavior. It learns what "normal" looks like from benign activity, so it needs no ransomware samples to detect attacks.
+File Defender watches for these patterns in each running process. It learns
+from *benign* activity, meaning ordinary use rather than attacks, and raises
+an alert when a process behaves differently. It does not need ransomware
+samples for training.
+
+This is a research prototype for learning and experimentation, not a finished
+security product. The offline demos run from start to finish, but the
+detection results come from simulated activity rather than real recordings.
+The two collectors also remain separate rather than feeding one combined
+event stream.
+
+## What the Experiments Found
+
+The detector summarizes recent activity as six measurements, called
+*features*, and gives that activity an anomaly score. A score above the alert
+threshold triggers a warning. If the activity was benign, the warning is a
+*false positive*, or false alarm.
+
+The experiments test both detection and false alarms. Several results differ
+from the initial expectations; the full methods and tables are in
+[`docs/EXPERIMENTS_AND_FINDINGS.md`](docs/EXPERIMENTS_AND_FINDINGS.md).
+
+- **The shipped model uses four of its six input features.**
+  `rename_delete_rate` and `unique_directory_count` never vary in
+  `testdata/benign_baseline.csv`. No tree splits on them, so changing those
+  inputs cannot change the score. `python/inspect_model.py` shows this.
+- **The tested rules miss patient attackers.** Below about 6 files per
+  minute, the attacker's average score matches a benign process's average.
+  Averaging scores over time with EWMA cannot help when the average is not
+  elevated. The CUSUM rule, with the calibration used here, does not help
+  either. A test of something other than the average has not been tried.
+- **Two benign programs account for the false alarms.** `git gc` and
+  `restic` backups resemble ransomware in these measurements. Setting the
+  threshold high enough to tolerate them makes detection much slower.
+- **A target false-positive rate is not a future guarantee.** With `git`
+  and `restic` excluded from calibration, a threshold aimed at 0.5% on one
+  benign session flags 1.15% of a second session. Including every process
+  raises the threshold, giving 0.34% on the second session, but the detector
+  then misses most attacks.
+- **A simpler detector performs better in this comparison.** On the
+  synthetic data, a 1.1 KB Mahalanobis model beats the 562 KB forest on files
+  lost, time to detection, and average precision at the same target
+  false-alarm rate.
+- **Training and live data share an entropy convention.** The collector and
+  simulators assign 0.0 to `open` and `close` events. For reads and writes,
+  the value represents entropy in the file's first 4096 bytes.
 
 ## Documentation
 
@@ -22,11 +69,15 @@ File Defender watches these behavioral patterns and alerts when a process deviat
 | [`docs/SAFETY_AND_SCOPE.md`](docs/SAFETY_AND_SCOPE.md) | What this project will and will not do, and the ethics of automatic response. Read this first. |
 | [`docs/ENTROPY_AND_ML_EXPLAINED.md`](docs/ENTROPY_AND_ML_EXPLAINED.md) | Step-by-step walkthrough of Shannon entropy and the full pipeline, from raw bytes to an alert. Written for a student meeting information theory for the first time. |
 | [`docs/WHY_ISOLATION_FOREST.md`](docs/WHY_ISOLATION_FOREST.md) | Why Isolation Forest was chosen, where it is genuinely weak, and what the alternatives would cost. |
-| [`docs/POTENTIAL_IMPROVEMENTS.md`](docs/POTENTIAL_IMPROVEMENTS.md) | Three proposed improvements, built as standalone modules and measured against the current detector. Includes the results that did not support the proposal. |
+| [`docs/ABOUT_THE_TREE.md`](docs/ABOUT_THE_TREE.md) | How one isolation tree is built and scored: the three random choices during training, the stopping rules, the leaf correction, what subsampling does in this project's setting, and what is actually inside the shipped model. Optional deeper reading after the entropy guide. |
+| [`docs/EXPERIMENTS_AND_FINDINGS.md`](docs/EXPERIMENTS_AND_FINDINGS.md) | Three proposed improvements, built as standalone modules and measured against the current detector. Includes the results that did not support the proposal, which turned out to be the important ones. |
 
 ## How It Works
 
-Three pieces, connected by a simple text stream of events:
+The collector records file events. The daemon reads those events and scores
+recent activity. Before the daemon can do that, the Python trainer learns
+a model from benign activity and saves it to a file. These three programs
+form the pipeline:
 
 ```text
   +---------------------+        CSV events         +-----------------------+
@@ -47,22 +98,40 @@ Three pieces, connected by a simple text stream of events:
 **Location:** `src/collector/fanotify_collector.c`
 
 - Watches filesystem using `fanotify` (Linux kernel API)
-- Captures file events: **opens, reads, writes** with actual file content
+- Captures file events: **opens, reads, writes, and close-after-write**
 - For each event, records:
   - Timestamp, user, process name/PID
-  - File operation (read, write, create, delete, etc.)
+  - File operation (`open`, `read`, `write`, `close`)
   - File path and size
-  - **Shannon byte entropy** of the content (0 = very structured, 8 = random/encrypted)
+  - **Shannon byte entropy** of the file's first 4096 bytes (0 = very structured, 8 = evenly spread byte values, which is what encrypted and compressed data look like)
 - Outputs one CSV line per event to stdout
+
+The collector follows the same entropy convention as the simulators in
+`python/`: `open` and `close` carry 0.0, while `read` and `write` carry the
+entropy of the file's current first 4096 bytes. Rename and delete events
+come from the second collector below. It has no file content to sample and
+reports 0.0.
+
+Measuring only the start of a file keeps the work small, but has limits. That
+prefix is not necessarily the data the process just wrote. A partly encrypted
+file may also keep an ordinary-looking prefix.
 
 **Why fanotify (not inotify or eBPF)?**
 
-The detector needs two things ordinary `inotify` cannot give: the **process id** that caused each event (to name and pause the attacker) and the **file content** (to measure entropy). `fanotify` provides both from userspace, with no kernel module to write or crash.
+The detector needs the process ID that caused an event, so it can identify
+and optionally pause the process. It also needs access to file contents for
+entropy measurements. Ordinary `inotify` does not provide both; `fanotify`
+does, without requiring this project to write a kernel module.
 
 There are two fanotify collectors:
 
 - **`fanotify_collector`** (primary) - classic mode: opens, reads, and writes with content for entropy, plus the pid.
-- **`fanotify_fid_collector`** (worked example) - FID mode (`FAN_REPORT_DFID_NAME`): the rename, delete, and create events that classic mode misses (for example the `.locked` rename and the deletion of the original). It reports the pid but not content. A complete deployment runs both and merges their streams; the daemon already counts rename/delete events.
+- **`fanotify_fid_collector`** (worked example) uses FID mode
+  (`FAN_REPORT_DFID_NAME`) for rename, delete, and create events that classic
+  mode misses. Examples include renaming a file to `.locked` and deleting
+  the original. It reports the PID but has no file content for entropy.
+  A complete deployment runs both collectors and merges their streams; the
+  daemon already counts rename/delete events.
 
 ### Component 2: Daemon (C++)
 
@@ -88,7 +157,8 @@ The Isolation Forest is trained **only on benign data**, so it needs no ransomwa
 
 ## The Behavioral Features
 
-Each rolling window of one process becomes six numbers that characterize its behavior:
+A *window* is the recent activity kept for one process, covering 10 seconds
+by default. The program summarizes it with these six numbers:
 
 | Feature | Why It Matters | Ransomware Looks Like |
 | --- | --- | --- |
@@ -99,7 +169,18 @@ Each rolling window of one process becomes six numbers that characterize its beh
 | **unique directory count** | Attack sweeps filesystem | Hundreds of dirs in seconds |
 | **unique extension count** | Attack touches all file types | Dozens of extensions |
 
-An **Isolation Forest** learns what benign windows look like and flags windows that are easy to "isolate" (unusual). Benign processes (code editor, browser, etc.) have low, stable values for all of these. Ransomware spikes.
+An Isolation Forest learns what benign windows look like. It flags windows
+that are easy to separate, or *isolate*, from the training examples. The
+ordinary editor and browser activity in the baseline has low, steady feature
+values, while the ransomware activity produces spikes.
+
+The table describes the six inputs, but a trained tree can split only on
+features that vary in its training data. In the supplied
+`testdata/benign_baseline.csv`, no process renames or deletes a file, and
+each process stays in one directory. The shipped `models/model.json`
+therefore never splits on `rename_delete_rate` or `unique_directory_count`.
+Run `uv run python python/inspect_model.py` to inspect feature usage; the
+trainer also warns about unused features after each run.
 
 ## Platform
 
@@ -166,7 +247,8 @@ This loads the workspace with all settings, debugging, and linting configured.
 
 ### Mode 1: Quick Offline Demo (No Root Needed)
 
-Use pre-recorded sample data to test the full pipeline:
+Start with the supplied event files to try training and scoring without
+monitoring a live system:
 
 ```bash
 # Train on a benign baseline (ordinary activity)
@@ -181,15 +263,18 @@ uv run python python/train_isolation_forest.py \
 
 **Expected:** only `unknown_process` (pid 4242) is flagged; `code`, `libreoffice`, and `firefox` are not.
 
-**What's happening:**
-
-- `benign_baseline.csv` contains typical file activity from normal use
-- `sample_events.csv` contains mostly normal activity, plus one process behaving like ransomware
-- The daemon trains on benign baseline, then scores the sample data
+The first command trains on `benign_baseline.csv`, which represents ordinary
+file activity, and writes `model.json`. The second command loads that model
+into the C++ daemon and scores `sample_events.csv`. This file includes benign
+activity and one process behaving like ransomware. Training happens in
+Python; the daemon only loads the result and scores events.
 
 ### Mode 2: Larger Multi-Process Attack Scenario
 
-A scenario that interleaves three benign processes with a `cryptor` process that sweeps 15 files across many directories (read original, write a high-entropy `.locked` copy, delete the original):
+This scenario mixes events from three benign processes with a `cryptor`
+process. The latter visits 15 files across several directories. For each
+file it reads the original, writes a high-entropy `.locked` copy, and deletes
+the original:
 
 ```bash
 ./build/file_defender_daemon \
@@ -206,7 +291,10 @@ uv run python python/simulate_activity.py --write-scenario testdata/attack_scena
 
 ### Mode 3: Live Monitoring (Requires Root)
 
-Watch real filesystem activity on your system. The collector needs root (`CAP_SYS_ADMIN`); the daemon runs as you. Piping them keeps the privileged part small:
+For live monitoring, the collector needs root privileges (`CAP_SYS_ADMIN`),
+but the daemon runs as your regular user. The pipe sends the collector's
+event records directly to the daemon, keeping the privileged part of the
+system small:
 
 ```bash
 sudo ./build/fanotify_collector "$HOME" \
@@ -217,7 +305,13 @@ sudo ./build/fanotify_collector "$HOME" \
 
 - `--notify` - send desktop notifications when anomalies are detected
 - `--stop` - pause flagged processes with `SIGSTOP` (can resume with `kill -CONT <pid>`)
-- `--max-fpr N` - tune false positive rate (higher = more alerts, lower = fewer alerts)
+- `--threshold N` - override the alert score (default: the `recommended_threshold` stored in the model file; lower = more alerts)
+- `--window N` - seconds per rolling window (default 10)
+- `--dump-features` - print one CSV row per event with the six features and the score, instead of alerts (used by `verify_cpp_parity.py`)
+
+The trainer's `--max-fpr` option sets the target false-positive rate used
+to choose `recommended_threshold`. It is not a daemon option: the daemon
+reads the saved threshold or uses the `--threshold` override.
 
 Add `--stop` to pause a flagged process with `SIGSTOP` (opt-in). A paused process is never killed; resume it with `kill -CONT <pid>`.
 
@@ -228,24 +322,27 @@ Add `--stop` to pause a flagged process with `SIGSTOP` (opt-in). A paused proces
 Each line is one file operation:
 
 ```text
-timestamp,user,process,pid,operation,path,size,entropy
-1623456000,alice,code,1234,write,/home/alice/file.txt,1024,4.5
+timestamp_seconds,user_name,process_name,process_id,operation,path,bytes,byte_entropy
+1623456000.000,alice,code,1234,write,/home/alice/file.txt,1024,4.50
 ```
 
-**Fields:**
+**Fields** (these exact column names are what `python/features.py` and the daemon expect):
 
-- `timestamp` - Unix time
-- `user` - username
-- `process` - process name (from `/proc/[pid]/comm`)
-- `pid` - process ID
-- `operation` - `open`, `write`, `read`, `create`, `delete`, `rename`
+- `timestamp_seconds` - Unix time, as a decimal number of seconds
+- `user_name` - username
+- `process_name` - process name (from `/proc/[pid]/comm`, which any program can set)
+- `process_id` - process ID
+- `operation` - `open`, `read`, `write`, `close` from the classic collector; `create`, `delete`, `rename` from the FID collector
 - `path` - full file path
-- `size` - file size in bytes
-- `entropy` - Shannon entropy (0.0 to 8.0)
+- `bytes` - file size in bytes
+- `byte_entropy` - Shannon entropy of the file's first 4096 bytes (0.00 to 8.00); 0.00 for `open`, `close`, and every FID event
 
 ### Feature Window
 
-The daemon groups events into **rolling time windows** per process. For a 10-second window, it computes the six features. Older windows slide out; new events slide in.
+The daemon keeps a rolling time window for each process. As a new event
+arrives, events older than the window are removed and the six features are
+recalculated. With the default 10-second window, the score describes that
+process's recent 10 seconds of activity.
 
 ## Development Workflow
 
@@ -284,12 +381,15 @@ The daemon groups events into **rolling time windows** per process. For a 10-sec
 
 ### Phase 3: Tune Detection
 
-Adjust these parameters to balance **detection latency** vs. **false positives**:
+Tuning involves a tradeoff: how quickly should the detector respond, and how
+many benign windows will it flag? The time before an alert is called
+*detection latency*. These settings affect that tradeoff:
 
-- `--window-size N` - seconds per window (default 10, lower = faster detection, more noise)
-- `--max-fpr N` - false positive rate threshold (higher = more alerts)
+- Daemon: `--window N` - seconds per window (default 10, lower = faster detection, more noise)
+- Daemon: `--threshold N` - alert score (lower = more alerts)
+- Trainer: `--max-fpr N` - where the model's `recommended_threshold` is aimed (higher = more alerts)
 
-Study the tradeoff:
+Compare the effects as you change the settings:
 
 - **Fast detection** needs small windows and low thresholds (but more false alerts)
 - **Few false alerts** needs large windows and high thresholds (but slower detection)
@@ -316,15 +416,33 @@ Read `docs/SAFETY_AND_SCOPE.md` for important guidance on:
 
 ## Testing and Verification
 
-### Verify the C++ Scorer
+### Verify the Scorer (two checks)
 
-The C++ daemon re-implements scikit-learn's Isolation Forest scoring. To ensure they match:
+The C++ daemon implements the scoring used by scikit-learn's Isolation
+Forest. The two parity checks compare implementations, but cover different
+parts of the pipeline:
 
 ```bash
+# 1. Any machine. Does the exported JSON score the same way scikit-learn does?
+#    Runs a Python copy of the tree walk. Does NOT run any C++.
 uv run python python/verify_parity.py
+
+# 2. Linux, after building. Does the real daemon compute the same six features
+#    and the same score as Python, event by event?
+uv run python python/verify_cpp_parity.py --daemon build/file_defender_daemon
 ```
 
-This runs the same scoring algorithm in Python and C++, comparing results to within floating-point epsilon. Use this after changing the feature definitions.
+Run both after changing a feature definition. Only the second one can catch a mismatch between `feature_window.cpp` and `features.py`.
+
+### Look Inside a Model
+
+```bash
+uv run python python/inspect_model.py
+```
+
+This prints the number and depth of the trees and the features used in their
+splits. It also changes one input feature at a time to show how the scores
+respond.
 
 ## Repository Layout
 
@@ -334,20 +452,22 @@ src/collector/   fanotify_collector.c     (primary: reads/writes + content)
                  inotify_demo.c           (teaching comparison)
 src/daemon/      main.cpp, feature_window.*, anomaly_model.* (Isolation Forest)
 src/common/      file_event.hpp (shared event schema)
-python/          features, simulator, trainer, parity verifier
+python/          features, simulator, trainer, two parity checks
+                 (verify_parity.py, verify_cpp_parity.py), inspect_model.py
                  (see "Detector Experiments" below for the research modules)
 testdata/        sample_events.csv, attack_scenario.csv (demos),
                  benign_baseline.csv (training)
 models/          trained model output (model.json, model.joblib)
 docs/            SAFETY_AND_SCOPE.md, ENTROPY_AND_ML_EXPLAINED.md,
-                 WHY_ISOLATION_FOREST.md, POTENTIAL_IMPROVEMENTS.md
+                 WHY_ISOLATION_FOREST.md, ABOUT_THE_TREE.md,
+                 EXPERIMENTS_AND_FINDINGS.md
 ```
 
 ### Detector Experiments
 
-These modules sit alongside the working pipeline and never modify it. They exist
-to test whether the current design choices are the right ones. See
-[`docs/POTENTIAL_IMPROVEMENTS.md`](docs/POTENTIAL_IMPROVEMENTS.md) for the
+These modules run separately from the monitoring pipeline. They test the
+current design against alternatives without modifying it. See
+[`docs/EXPERIMENTS_AND_FINDINGS.md`](docs/EXPERIMENTS_AND_FINDINGS.md) for the
 measured results.
 
 ```text
@@ -358,21 +478,26 @@ extended_isolation_forest.py    Isolation Forest with oblique cuts
 compare_detectors.py            four-way comparison at one false-positive budget
 evaluation.py                   labeled features, shared thresholds, metrics
 simulate_realistic_baseline.py  a benign baseline hard enough to tell detectors apart
+subsample_sweep.py              what the subsample size does, in two settings
 ```
 
-Run any of the three experiments directly:
+Every table in the docs comes from one of these commands:
 
 ```bash
 uv run python python/demo_temporal_aggregation.py
-uv run python python/compare_detectors.py
+uv run python python/compare_detectors.py --paces 600 300 120 60 30 --seeds 5
 uv run python python/extended_isolation_forest.py
+uv run python python/subsample_sweep.py
+uv run python python/inspect_model.py
 ```
 
 ## Common Questions
 
 ### Can this detect my specific ransomware?
 
-File Defender learns what "normal" looks like for your system and flags anomalies. It isn't trained on specific ransomware samples, so it's designed to catch new, unseen attacks with similar behavioral patterns.
+File Defender learns from benign activity and looks for windows that differ
+from it. It is not trained on particular ransomware samples. The aim is to
+recognize new attacks that show the file-access patterns described above.
 
 ### Does it require root?
 
@@ -382,15 +507,33 @@ File Defender learns what "normal" looks like for your system and flags anomalie
 
 ### What if a legitimate process has high entropy?
 
-This is a potential false positive. Media processing (images, videos), database operations, or compression can produce high entropy. The Isolation Forest learns what's normal in *all six dimensions*, so a single high-entropy spike may not be anomalous if other features are typical. [`docs/POTENTIAL_IMPROVEMENTS.md`](docs/POTENTIAL_IMPROVEMENTS.md) measures how well that holds up against `git gc` and a `restic` backup run, which are the hard cases.
+It may cause a false alarm. Image and video processing, database work,
+compression, and saving a `.docx` file can all produce high entropy; a
+`.docx` is itself a ZIP archive. The forest considers its usable features
+together, so high entropy alone may not be enough to trigger an alert.
+
+The harder cases in
+[`docs/EXPERIMENTS_AND_FINDINGS.md`](docs/EXPERIMENTS_AND_FINDINGS.md) are
+`git gc` and a `restic` backup run. In the simulated data, `restic` triggers
+all four detectors. `git` triggers three; the robust z-score rule does not
+flag it.
 
 ### Can I use this for live protection?
 
-Yes, with the `--stop` flag it can pause suspicious processes. Review `docs/SAFETY_AND_SCOPE.md` for ethical and legal considerations before enabling automatic actions.
+Not yet. Live mode works, and `--stop` can pause a flagged process, but this
+is not a system to rely on for protecting important files. The results are
+from simulations. The collectors are not merged, leaving
+`rename_delete_rate` at zero in the live setup above, and the shipped model
+ignores two of its six inputs.
+
+Use live mode to observe the detector and collect a baseline in alert-only
+mode, on a machine with backups. Read `docs/SAFETY_AND_SCOPE.md` before
+enabling `--stop`.
 
 ### How do I deploy this?
 
-This is a research project with a teaching focus. For production use, consider:
+This project is intended for research and teaching. Work toward production
+use would need to consider:
 
 - Integrating with existing security monitoring (SIEM)
 - Tuning on your organization's specific baseline
@@ -411,7 +554,11 @@ This is a research project with a teaching focus. For production use, consider:
 1. **Run the offline demo** - familiarize yourself with the pipeline
 2. **Read the code** - start with `python/features.py` and `src/daemon/feature_window.cpp`
 3. **Understand the entropy math** - [`docs/ENTROPY_AND_ML_EXPLAINED.md`](docs/ENTROPY_AND_ML_EXPLAINED.md) works it through by hand
-4. **Question the model choice** - [`docs/WHY_ISOLATION_FOREST.md`](docs/WHY_ISOLATION_FOREST.md) argues both sides, and [`docs/POTENTIAL_IMPROVEMENTS.md`](docs/POTENTIAL_IMPROVEMENTS.md) measures the alternatives
+4. **Examine the model choice** - read the reasons in
+   [`docs/WHY_ISOLATION_FOREST.md`](docs/WHY_ISOLATION_FOREST.md), follow one
+   tree in [`docs/ABOUT_THE_TREE.md`](docs/ABOUT_THE_TREE.md), then compare
+   the results in
+   [`docs/EXPERIMENTS_AND_FINDINGS.md`](docs/EXPERIMENTS_AND_FINDINGS.md)
 5. **Modify and experiment** - change thresholds, add features, tune parameters
 6. **Collect your own data** - train on your real workflow
 7. **Deploy cautiously** - understand what it detects before enabling auto-pause

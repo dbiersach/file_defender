@@ -26,6 +26,14 @@ benign processes the false-positive budget has to cover:
      first week of alerts: the two heavy hitters get their own baseline or an
      allowlist entry, and the general threshold tightens.
 
+     Be clear about what this second calibration does and does not do. The
+     forest is still trained on every benign process, including git and
+     restic. Only two things change: their windows are left out when the
+     thresholds are chosen, and they are left out of the benign false-alarm
+     table. This shows what a tighter threshold buys; it is not a working
+     allowlist, and it does not answer how those two applications should be
+     handled in a real deployment.
+
 Run it with:
 
   uv run python python/demo_temporal_aggregation.py
@@ -371,7 +379,7 @@ def main() -> None:
     print(
         "\nRead the tables by column, not by row. A rule earns its keep where it\n"
         "loses fewer files than 'instant' at the same pace. See\n"
-        "docs/POTENTIAL_IMPROVEMENTS.md for the interpretation."
+        "docs/EXPERIMENTS_AND_FINDINGS.md for the interpretation."
     )
 
 

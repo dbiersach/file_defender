@@ -20,15 +20,22 @@ genuinely competitive:
 Both are one-class: they are fitted on benign data only, exactly like the
 Isolation Forest, so the project's central research claim is preserved.
 
-Both also address the Isolation Forest's direction-blindness. The forest's
-random cuts make its score symmetric in every feature, so an unusually *quiet*
-process is as anomalous as an unusually loud one. Here, `one_sided=True` (the
-default) encodes what we actually know: for all six features, high is
-suspicious and low is not.
+Only the z-score detector knows which direction is dangerous. The Isolation
+Forest is not told that "more" is worse than "less": it flags whatever is
+rare, and if benign data were lopsided its score would be lopsided too, so it
+is not perfectly symmetric either. What it lacks is the domain rule. The
+z-score rule with `one_sided=True` (the default) writes that rule down: for all
+six features, high is suspicious and low is not. The Mahalanobis detector does
+NOT do this. Its distance is measured from the center of the benign cloud in
+every direction equally, so an unusually quiet window and an unusually loud
+one at the same distance get the same score.
 
-Neither detector needs a StandardScaler. The z-score rule divides by a
-per-feature scale by construction, and the Mahalanobis distance absorbs the
-covariance, which includes the variances.
+On scaling: the z-score rule divides each feature by its own scale, so feeding
+it standardized features would change nothing. The Mahalanobis detector is
+fitted on raw features by choice. Its Ledoit-Wolf shrinkage pulls the
+covariance toward a scaled identity matrix, and that step is not perfectly
+scale-free, so "raw features" here is a decision that was made, not a
+mathematical guarantee that scaling would not matter.
 
 See `compare_detectors.py` for the evaluation harness that puts these up
 against the forest.

@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
 """verify_parity.py
 
-Prove that the exported JSON model scores identically to scikit-learn.
+Check that the exported JSON model scores the same way scikit-learn does.
 
 The C++ daemon cannot be compiled or run on every machine (it needs Linux), so
-we cannot test it here directly. Instead, this script re-implements the JSON
-scoring algorithm in pure Python - the SAME algorithm the C++ AnomalyModel uses
-- and checks it matches scikit-learn's own score to within a tiny tolerance.
+this script does not run it. Instead, it re-implements the JSON scoring
+algorithm in pure Python - the SAME algorithm the C++ AnomalyModel uses - and
+checks it matches scikit-learn's own score to within a tiny tolerance.
 
-If this passes, the JSON export format and the scoring math are correct, so the
-C++ port (which mirrors this logic line for line) can be trusted.
+Be precise about what a pass means. It shows that the JSON export is complete
+and that the scoring math written in Python is right. It does NOT run the C++
+code, and it does NOT compare the C++ feature computation against
+python/features.py. Those two checks live in verify_cpp_parity.py, which runs
+the real daemon and must be run on Linux.
+
+One more caveat: scikit-learn converts the rows it scores to float32 before
+walking the trees, while this script and the C++ daemon use doubles. A value
+that sits exactly on a split threshold could go left in one and right in the
+other. The boundary check at the end of this script measures how much that
+matters on the trained model.
 
 It is self-contained: it trains a small synthetic model in memory, exports it
 to the same JSON format the C++ daemon reads, and compares scores. Just run:
@@ -141,14 +150,65 @@ def main() -> None:
     print(f"Normal flagged    : {normal_flagged} / {(labels == 'normal').sum()}")
     print(f"Ransomware flagged: {ransom_flagged} / {(labels == 'ransomware').sum()}")
 
+    # Boundary check. Build rows that sit exactly on split thresholds, score
+    # them both ways, and report the worst disagreement. This is where the
+    # float32 cast inside scikit-learn could, in principle, send a value down
+    # a different branch than the double-precision JSON walk does.
+    boundary_diff = boundary_case_difference(sk_model, scaler, model_json)
+    print(f"Boundary rows max abs difference: {boundary_diff:.3e}")
+
     if max_diff <= args.tolerance:
         print(
-            "\nPARITY OK: JSON scoring matches scikit-learn. The C++ port is trustworthy."
+            "\nPARITY OK: the JSON export scores the same way scikit-learn does.\n"
+            "The C++ scorer mirrors this Python reference line for line, but it\n"
+            "was NOT run here. Run python/verify_cpp_parity.py on Linux for that."
         )
     else:
         raise SystemExit(
             f"\nPARITY FAILED: difference {max_diff} exceeds {args.tolerance}"
         )
+
+
+def boundary_case_difference(
+    sk_model: IsolationForest, scaler: StandardScaler, model_json: dict
+) -> float:
+    """
+    Score rows placed exactly on split thresholds both ways; return the gap.
+
+    For each of the first few trees, take the root's split feature and
+    threshold, build a standardized row whose other coordinates are zero and
+    whose split coordinate equals the threshold exactly, then map it back to
+    raw units and score it with scikit-learn and with the JSON walk.
+
+    Parameters
+    ----------
+    sk_model : IsolationForest
+        The fitted scikit-learn forest.
+    scaler : StandardScaler
+        The scaler used at training time.
+    model_json : dict
+        The exported model, as read back from JSON.
+
+    Returns
+    -------
+    float
+        The largest absolute score difference over the boundary rows.
+    """
+    n_features = len(model_json["scaler_mean"])
+    rows = []
+    for tree in model_json["trees"][:25]:
+        feature = int(tree["feature"][0])
+        threshold = float(tree["threshold"][0])
+        scaled = np.zeros(n_features)
+        scaled[feature] = threshold
+        rows.append(scaled)
+    scaled_rows = np.asarray(rows)
+    raw_rows = scaled_rows * np.asarray(model_json["scaler_scale"]) + np.asarray(
+        model_json["scaler_mean"]
+    )
+    json_scores = score_from_json(model_json, raw_rows)
+    sklearn_scores = -sk_model.score_samples(scaler.transform(raw_rows))
+    return float(np.max(np.abs(json_scores - sklearn_scores)))
 
 
 if __name__ == "__main__":

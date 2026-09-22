@@ -13,9 +13,16 @@
  *     and even then a process is only ever paused (never killed), so a false
  *     positive can be undone with `kill -CONT <pid>`.
  *
+ * Flags: --events <csv|->  --model <json>  --window <seconds>  --threshold <score>
+ *        --notify  --stop  --dump-features
+ *
  * Examples:
  *   Offline test with the sample data:
  *     ./file_defender_daemon --events ../testdata/sample_events.csv --model model.json
+ *
+ *   Print features and scores as CSV instead of alerts (for the parity test):
+ *     ./file_defender_daemon --events ../testdata/sample_events.csv --model model.json \
+ *         --dump-features
  *
  *   Live monitoring (collector runs as root, daemon as your user):
  *     sudo ./fanotify_collector /home/student | ./file_defender_daemon --model model.json --notify
@@ -27,6 +34,7 @@
 
 #include <csignal>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -120,6 +128,12 @@ int main(int argc, char** argv) {
     const bool do_notify = has_flag(argc, argv, "--notify");
     const bool do_stop = has_flag(argc, argv, "--stop");
 
+    // --dump-features turns the daemon into a test fixture. Instead of alerts
+    // it prints one CSV row per event holding the six features it computed
+    // and the score it produced, so python/verify_cpp_parity.py can compare
+    // this C++ code against the Python reference number for number.
+    const bool dump_features = has_flag(argc, argv, "--dump-features");
+
     AnomalyModel model;
     if (!model.load(model_path)) {
         std::cerr << "Could not load model: " << model_path << "\n";
@@ -157,6 +171,12 @@ int main(int argc, char** argv) {
     std::unordered_map<int, FeatureWindow> windows;
     std::unordered_set<int> already_flagged;
 
+    if (dump_features) {
+        std::cout << "timestamp_seconds,process_id,events_per_second,writes_per_second,"
+                     "rename_delete_rate,average_byte_entropy,unique_directory_count,"
+                     "unique_extension_count,score\n";
+    }
+
     std::string line;
     while (std::getline(*input, line)) {
         if (line.empty() || line.rfind("timestamp_seconds", 0) == 0) {
@@ -174,6 +194,17 @@ int main(int argc, char** argv) {
 
         const FeatureVector features = window.features();
         const double anomaly_score = model.score(to_vector(features));
+
+        if (dump_features) {
+            // Same column order as python/features.py, then the score. Ten
+            // decimals is enough to catch any real disagreement.
+            std::cout << std::fixed << std::setprecision(10) << event.timestamp_seconds << ","
+                      << event.process_id << "," << features.events_per_second << ","
+                      << features.writes_per_second << "," << features.rename_delete_rate << ","
+                      << features.average_byte_entropy << "," << features.unique_directory_count
+                      << "," << features.unique_extension_count << "," << anomaly_score << "\n";
+            continue;
+        }
 
         if (anomaly_score >= threshold) {
             std::cout << "ALERT score=" << anomaly_score << " pid=" << event.process_id

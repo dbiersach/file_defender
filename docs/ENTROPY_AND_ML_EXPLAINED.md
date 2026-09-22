@@ -2,50 +2,86 @@
 
 *A step-by-step companion to the File Defender research project.*
 
-This document answers four questions, in order:
+To follow a file event all the way to an alert, we first need to understand
+the measurement that goes into the event record. This guide takes that path
+in four steps:
 
 1. **What does "entropy" actually mean?** (the concept)
 2. **How is entropy calculated?** (the math, worked by hand)
 3. **How does entropy get into `sample_events.csv`?** (the data path)
-4. **How does the whole machine-learning protocol work?** (training → export → scoring → alert)
+4. **How do the programs turn those numbers into an alert?** (training → export → scoring → alert)
 
-It is written to be read top to bottom by a student who has seen some C++ and AP Calculus but has not studied information theory or machine learning before. Every claim points back to a real file in this repository so you can check it yourself.
+Some experience with C++ and AP Calculus will help, but no previous study of
+information theory or machine learning is assumed. The worked examples build
+up the ideas before the guide connects them to the code. Links point to the
+relevant files so you can follow the implementation as you read.
 
 ---
 
 ## Part 1 - What "Entropy" Means
 
-### The one-sentence version
+### Start with the byte values
 
-**Entropy measures how unpredictable a chunk of data is.** Low entropy = predictable and structured (like English text or a spreadsheet). High entropy = looks completely random (like encrypted or compressed data).
+Entropy is often introduced as a measure of unpredictability. In this
+project, we calculate it by counting how often each byte value occurs. A file
+dominated by a few byte values has low entropy. A file with byte values spread
+evenly across the full range has high entropy. Text and structured documents
+tend toward the lower end; encrypted and compressed data tend toward the
+higher end. We will also see why this measurement is not a test of randomness.
 
 ### Why a ransomware detector cares
 
-When ransomware attacks, it reads your normal files and writes back **encrypted** versions. Encryption is *designed* to make output look like random noise - that is the whole point of good encryption, because any visible pattern would be a weakness an attacker could exploit. So the encrypted file has **very high entropy**.
+Ransomware reads ordinary files and writes encrypted versions. Encryption is
+designed to hide patterns in the original content, producing bytes that look
+like random noise. Those bytes have high entropy.
 
-This gives us a physical fingerprint we can measure without ever knowing which ransomware family is attacking:
+This gives the detector a measurement it can use without knowing the name or
+family of the ransomware. The table shows the kinds of values involved:
 
 | Kind of data | Typical entropy (bits/byte) | Why |
 | --- | --- | --- |
 | A file of all zeros | 0.0 | Perfectly predictable - every byte is the same |
 | Plain English text | ~4.0 - 4.5 | Only ~26 letters + spaces are common; `e` and `t` dominate |
-| An office document / PDF | ~4.5 - 6.0 | Structured, with headers and repeated tokens |
+| An old-style `.doc` or a plain PDF | ~4.5 - 6.0 | Structured, with headers and repeated tokens |
+| A modern Office file (`.docx`, `.xlsx`, `.ods`) | ~7.0 - 7.8 | These are ZIP archives in disguise; almost everything inside is compressed |
 | A JPEG or MP4 (already compressed) | ~7.0 - 7.9 | Compression already removed most redundancy |
 | **Encrypted / ransomware output** | **~7.9 - 8.0** | Statistically indistinguishable from random |
 
-The `README.md` states the rule the project relies on: *"0 = very structured, 8 = random/encrypted... A sudden jump toward 8.0 on many files is a hallmark of ransomware."*
+The project looks for increases toward 8.0 across many files as one sign of
+ransomware activity. To interpret that sign, keep two limitations in mind:
+
+- **Compression can give the same result as encryption.** A `.docx` is a ZIP
+  file, a JPEG contains compressed image data, and a backup tool may write
+  compressed archives. All can have high entropy without being malicious.
+  That is why the detector uses six features rather than entropy alone.
+- **The count does not describe the order of the bytes.** A file containing
+  0, 1, 2, ..., 255 in order, repeated over and over, is predictable. Its
+  entropy is still exactly 8.0 because each value occurs equally often. A
+  high result tells us that the byte values are evenly distributed, not that
+  the file is random or malicious.
 
 ### Why the scale stops at 8
 
-Entropy here is measured in **bits per byte**. A byte can hold one of 256 different values (0-255). The most unpredictable a single byte can possibly be is when all 256 values are equally likely. It takes exactly **log₂(256) = 8 bits** to describe one of 256 equally likely outcomes. So **8.0 is the mathematical maximum** for byte entropy, and encrypted data pushes right up against that ceiling.
+The unit is **bits per byte**. A byte has 256 possible values, numbered 0-255.
+The greatest uncertainty about one byte occurs when all those values are
+equally likely. Describing one of 256 equally likely outcomes takes
+**log₂(256) = 8 bits**, so 8.0 is the maximum byte entropy.
 
-Think of entropy as answering: *"On average, how many yes/no questions would I need to ask to guess the next byte?"* For a file of all zeros, zero questions - you already know it's zero. For truly random bytes, a full 8 questions every time.
+One way to picture this is as a series of yes/no questions about a byte. If
+every byte is zero, you already know the answer and need no questions. If
+every possible value is equally likely, identifying the byte requires the
+full 8 bits of information. This picture concerns the byte-value
+probabilities; it does not account for patterns in their order.
 
 ---
 
 ## Part 2 - How Entropy Is Calculated
 
-The project uses **Shannon entropy**, named after Claude Shannon, who founded information theory in 1948. The real implementation lives in [`src/collector/fanotify_collector.c`](../src/collector/fanotify_collector.c#L63-L82) in the function `shannon_entropy`. Here is that exact function:
+The calculation is called **Shannon entropy**. It comes from Shannon's work
+founding information theory in 1948. The function `shannon_entropy` in
+[`src/collector/fanotify_collector.c`](../src/collector/fanotify_collector.c#L63-L82)
+implements it. Read the function once for its overall structure; the formula
+and examples below explain each step.
 
 ```c
 static double shannon_entropy(const unsigned char *data, size_t length) {
@@ -74,9 +110,9 @@ static double shannon_entropy(const unsigned char *data, size_t length) {
 
 $$H = -\sum_{i=0}^{255} p_i \, \log_2(p_i)$$
 
-Read it in plain English:
+Here is how the symbols relate to the byte counts:
 
-- For each possible byte value `i` (there are 256 of them, 0 through 255)…
+- The index `i` runs through the 256 possible byte values, from 0 through 255.
 - `p_i` is the **fraction of the file that is that byte value** (its probability).
 - `log₂(p_i)` is negative (because probabilities are ≤ 1), so `-p_i · log₂(p_i)` is a positive contribution.
 - **Add up all 256 contributions.** That sum is the entropy.
@@ -87,7 +123,7 @@ Read it in plain English:
 2. **Convert counts to probabilities.** For each value, `p = count / length`.
 3. **Sum `-p · log₂(p)`** over every value that actually appears. (Values that never appear contribute nothing, which is why the code `continue`s when `counts[symbol] == 0` - this also avoids `log₂(0)`, which is undefined.)
 
-### Worked example #1: a boring, structured file
+### Worked example #1: a file with one common byte value
 
 Suppose a tiny 8-byte file contains: `A A A A A A A B`
 
@@ -98,9 +134,10 @@ $$H = -\big(0.875 \cdot \log_2 0.875\big) - \big(0.125 \cdot \log_2 0.125\big)$$
 $$H = -(0.875 \cdot -0.1926) - (0.125 \cdot -3.0)$$
 $$H = 0.1685 + 0.375 = \mathbf{0.544 \text{ bits/byte}}$$
 
-Very low - almost all bytes are the same, so the file is highly predictable.
+The result is low because seven of the eight bytes have the same value.
+There is little uncertainty about which value a byte will have.
 
-### Worked example #2: a maximally random file
+### Worked example #2: a file with the highest possible entropy for its size
 
 Suppose an 8-byte file contains 8 **different** byte values, each appearing once:
 
@@ -110,31 +147,87 @@ Suppose an 8-byte file contains 8 **different** byte values, each appearing once
 
 With only 8 bytes the ceiling is log₂(8) = 3.0, and we hit it exactly. Scale this up: a 4096-byte file in which all 256 byte values appear about equally often approaches the true ceiling of **8.0 bits/byte** - that is what encrypted output looks like.
 
+### Worked example #3: high entropy without any randomness
+
+Now take a 256-byte file containing 0, 1, 2, ..., 255 in order. You can predict
+every byte, but each of the 256 values appears exactly once. Each probability
+is therefore p = 1/256. Each contribution is `-(1/256)(-8) = 8/256`, giving
+`256 × 8/256 = 8.0 bits/byte` in total.
+
+Why does a predictable file get the maximum result? The calculation counts
+values; it never checks their order. This is the distinction introduced in
+Part 1. Encrypted output, compressed output, and this ordered counting file
+can all score high because their byte values are spread evenly. The result
+is a useful clue about file activity, but it cannot decide whether the
+activity is malicious.
+
 ### One practical detail: sampling
 
-Reading an entire 2 GB video just to measure entropy would be slow. The collector reads only the **first 4096 bytes** of each file and measures the entropy of that sample:
+Reading an entire 2 GB video for each measurement would be slow. The collector
+instead samples the **first 4096 bytes**, called the file's *prefix*, and
+calculates entropy from that sample.
+
+It samples only on `read` and `write` events. An `open` records 0.0 because
+opening a file touches no content. A `close` also records 0.0: the convention
+is to measure the content at the write rather than count it again when the
+file closes. Both choices affect the average used later in the feature
+window.
 
 ```c
 #define ENTROPY_SAMPLE_BYTES 4096
 ...
 unsigned char sample[ENTROPY_SAMPLE_BYTES];
-ssize_t sampled = pread(meta->fd, sample, sizeof(sample), 0);   // read up to 4096 bytes
-double entropy = (sampled > 0) ? shannon_entropy(sample, (size_t)sampled) : 0.0;
+double entropy = 0.0;
+if (meta->mask & (FAN_ACCESS | FAN_MODIFY)) {                      // read or write only
+    ssize_t sampled = pread(meta->fd, sample, sizeof(sample), 0);  // read up to 4096 bytes
+    if (sampled > 0) {
+        entropy = shannon_entropy(sample, (size_t)sampled);
+    }
+}
 ```
 
-4096 bytes is plenty to estimate randomness reliably, and it keeps the detector fast - the README lists *"Entropy detection is fast - Shannon entropy is O(n) in file size"* as a key design win. (The cost is linear in the number of bytes examined, and we cap that at 4096.)
+The calculation takes work proportional to the number of bytes examined,
+written as O(n). Capping the sample at 4096 bytes limits that work even for
+large files.
+
+Sampling also limits what the number can tell us:
+
+- **The sample comes from the file as it is when the collector reads it.**
+  The collector never sees the exact buffer passed to `write()`. For a
+  freshly encrypted file, the prefix contains the encrypted data. For a
+  file edited in the middle, the first 4096 bytes may not have changed at all.
+- **The prefix may not represent the whole file.** A PDF begins with
+  readable text before its compressed sections, and a ZIP begins with a
+  small header. A sample may therefore have higher or lower entropy than
+  the file as a whole. Ransomware can also encrypt only part of a file to
+  run faster, as described in the FBI and CISA advisory on the Royal family.
+  A partly encrypted file can retain an ordinary-looking prefix that does
+  not reveal the encrypted portion.
+
+Prefix entropy is therefore a low-cost heuristic: a useful rule for common
+cases, with limits on which bytes it observes and when it observes them.
+
+The collector and the simulators in `python/` follow the same convention:
+`open` and `close` get 0.0; `read` and `write` get a value representing the
+current prefix entropy. Changing that rule on only one side would give
+training data and live data different meanings. The two parity tests do not
+check this part of the data collection. They start with existing CSV rows
+and compare the features and scores calculated from those rows.
 
 ---
 
 ## Part 3 - How Entropy Gets Into `sample_events.csv`
 
-There are **two different paths** by which an entropy number ends up in a CSV, and it is important to understand that the demo file was made by the second path, not the first.
+An entropy number in a CSV may be measured from a real file or supplied as
+part of a simulation. The short demo file uses hand-written values. We will
+first follow the live measurement, then compare it with the teaching file
+and the larger simulator.
 
-### Path A - the real, live collector (production path)
+### Path A - the live collector
 
 On a real Linux machine, the flow is:
 
-```
+```text
 A process touches a file
       ↓
 fanotify (Linux kernel) notifies the collector, handing it:
@@ -142,8 +235,9 @@ fanotify (Linux kernel) notifies the collector, handing it:
    • an open file descriptor to the file
       ↓
 fanotify_collector.c:
-   • reads the first 4096 bytes of the file  (pread)
-   • runs shannon_entropy() on those bytes
+   • for a read or a write: reads the first 4096 bytes of the file
+     (pread) and runs shannon_entropy() on them
+   • for an open or a close: records entropy 0.0
    • looks up the process name  (/proc/<pid>/comm)
    • looks up the owning user     (owner of /proc/<pid>)
    • resolves the file path        (/proc/self/fd/<fd>)
@@ -161,15 +255,19 @@ printf("%.3f,%s,%s,%d,%s,%s,%llu,%.2f\n",
 
 Those eight `printf` fields are, in order, the eight CSV columns:
 
-```
+```text
 timestamp_seconds,user_name,process_name,process_id,operation,path,bytes,byte_entropy
 ```
 
-So in production, the `byte_entropy` value in the last column is **literally the output of `shannon_entropy()`** computed on the real bytes the process wrote or read. Notice `%.2f` - that is why entropy in the CSV always shows two decimal places (e.g. `7.90`).
+For sampled live events, the last column contains the result of
+`shannon_entropy()` on the file bytes described above. The `%.2f` in the
+print statement formats the entropy with two decimal places, such as `7.90`.
 
-### Path B - the hand-authored teaching file (what `sample_events.csv` actually is)
+### Path B - the hand-written teaching file
 
-`sample_events.csv` is **not** a recording from a live machine. It is a small, deliberately hand-written teaching file - 12 events - designed so a student can read the whole attack story at a glance. Here it is in full:
+`sample_events.csv` is not a live recording. Its 13 events were written by
+hand so you can follow the activity of each process without searching through
+a large log. Here is the complete file:
 
 ```csv
 timestamp_seconds,user_name,process_name,process_id,operation,path,bytes,byte_entropy
@@ -188,34 +286,48 @@ timestamp_seconds,user_name,process_name,process_id,operation,path,bytes,byte_en
 27,dave,unknown_process,4242,write,/home/dave/Desktop/todo.txt.locked,2048,7.80
 ```
 
-The entropy numbers here were **chosen by hand to be realistic**, following the physics from Part 1:
+The entropy values were chosen to represent the kinds of content discussed
+in Part 1:
 
 - `open` events have entropy `0.00` - opening a file reads no content, so there is nothing to measure.
-- Benign reads/writes sit at `4.20`, `4.80`, `5.10`, `4.60` - normal document/PDF territory.
+- Benign reads and writes use `4.20`, `4.80`, `5.10`, and `4.60` to represent ordinary document and PDF content.
 - The reads of the *original* files (`4.60`, `6.20`, `4.10`) are normal - the attacker hasn't encrypted them yet.
-- Every `.locked` **write** is `7.90`, `7.95`, `7.80` - jammed against the 8.0 ceiling, exactly the encrypted-data signature.
+- The `.locked` writes use `7.90`, `7.95`, and `7.80`, near the 8.0 maximum, to represent encrypted output.
 
-That contrast - a benign `4.60` read of `a.docx` immediately followed by a `7.90` write of `a.locked` - is the entire attack pattern in miniature. The `unknown_process` (pid 4242) reads a real file, writes a near-random encrypted copy, and renames/removes the original. That is ransomware behavior, and it is why the README promises *"only `unknown_process` (pid 4242) is flagged."*
+Look at the sequence for `unknown_process` (pid 4242): a `4.60` read of
+`a.docx` is followed by a `7.90` write of `a.locked`, then a rename of the
+original. These rows represent the read, encrypted-write, and rename/remove
+pattern of ransomware. In the README demo, this is the process that is
+flagged; the benign processes are not.
 
-### A third, in-between path - the simulator
+### Path C - the simulator
 
-[`python/simulate_activity.py`](../python/simulate_activity.py) generates larger CSVs (like `attack_scenario.csv`) programmatically. It does **not** compute Shannon entropy on real bytes either - instead it **draws entropy from a probability distribution** chosen to match reality. For example the ransomware `.locked` writes are drawn from a normal distribution centered at 7.9:
+[`python/simulate_activity.py`](../python/simulate_activity.py) generates
+larger CSVs such as `attack_scenario.csv`. It does not read file bytes to
+calculate entropy. Instead, it draws values from a probability distribution
+chosen to represent the content. For example, simulated ransomware writes
+use a normal distribution centered at 7.9:
 
 ```python
 float(np.clip(rng.normal(7.9, 0.08), 0.0, 8.0))     # encrypted-looking writes
 ```
 
-while benign writes are drawn around 4.3-5.2. So all three paths agree on the *meaning* of the number; they differ only in whether the number was measured from real bytes (Path A) or synthesized to look realistic (Paths B and C).
-
-**Key takeaway:** In deployment the entropy column is a genuine `shannon_entropy()` measurement. In the demo/test files it is a hand-picked or simulated stand-in with the same physical meaning, so the rest of the pipeline behaves identically.
+Benign write values are drawn around 4.3-5.2. The three paths give the column
+the same intended meaning, but obtain its values differently: measurement
+for the live collector, hand selection for the short teaching file, and
+random sampling for the larger simulator. The later stages process the
+column in the same way regardless of where its values came from.
 
 ---
 
-## Part 4 - How the Whole Machine-Learning Protocol Works
+## Part 4 - From Events to Alerts
 
-Now we connect entropy (one column of one event) to the actual detector. There are **four stages**: turn events into features, train a model on benign features, export the model, and score live windows against it.
+So far, entropy has been one value in one event record. The detector needs
+to combine that record with recent activity before it can make a decision.
+There are four stages: build features from events, train on benign features,
+save the trained model, and use that model to score new windows.
 
-```
+```text
 raw events (CSV)
    → rolling window per process         (Stage A: feature engineering)
    → 6-number feature vector
@@ -227,9 +339,17 @@ raw events (CSV)
 
 ### Stage A - From events to a 6-number "feature vector"
 
-A single event (one CSV line) is not enough to judge a process. `code` writing one file at entropy 4.8 is normal; a process writing 40 files/second at entropy 7.9 across 15 directories is not. So we summarize **a short rolling window of recent activity** - 10 seconds by default - into **six numbers**.
+A single event, represented by one CSV line, is not enough to judge a
+process. Compare `code` writing one file at entropy 4.8 with a process
+writing 40 files/second at entropy 7.9 across 15 directories. The first is
+ordinary editing activity; the second is not. To describe that difference,
+the detector summarizes a short rolling window, 10 seconds by default,
+with six numbers.
 
-The canonical definition is in [`python/features.py`](../python/features.py#L23-L30), and the C++ daemon computes the identical six in [`src/daemon/feature_window.cpp`](../src/daemon/feature_window.cpp#L23-L57). The six features:
+The reference definitions are in
+[`python/features.py`](../python/features.py#L23-L30). The C++ daemon computes
+the same six measurements in
+[`src/daemon/feature_window.cpp`](../src/daemon/feature_window.cpp#L23-L57):
 
 | # | Feature | How it's computed over the window | Why ransomware spikes it |
 | --- | --- | --- | --- |
@@ -240,7 +360,10 @@ The canonical definition is in [`python/features.py`](../python/features.py#L23-
 | 5 | `unique_directory_count` | count of distinct parent directories | Attacks sweep the whole filesystem |
 | 6 | `unique_extension_count` | count of distinct file extensions | Attacks encrypt every file type |
 
-Notice feature #4: the raw per-event entropy from Part 2/3 gets **averaged across the whole window**. So entropy is not judged in isolation - it becomes one of six coordinates describing behavior.
+For feature #4, the program averages the per-event entropy values across
+the whole window. That average becomes one coordinate of the six-number
+feature vector, rather than a separate decision about whether a file is
+malicious.
 
 **The rolling window** works like a queue. Each new event is added; events older than `window_seconds` are dropped. In C++ ([`feature_window.cpp`](../src/daemon/feature_window.cpp#L17-L21)):
 
@@ -252,18 +375,27 @@ void FeatureWindow::expire_old_events(double now_seconds) {
 }
 ```
 
-Crucially, **each process gets its own window** (`std::unordered_map<int, FeatureWindow> windows;` keyed by pid in [`main.cpp`](../src/daemon/main.cpp#L157)). That is what lets the detector name - and optionally pause - the *specific* offending process rather than just saying "something is wrong."
+Each process has its own window. In
+[`main.cpp`](../src/daemon/main.cpp#L157),
+`std::unordered_map<int, FeatureWindow> windows;` stores the windows by PID.
+Keeping them separate lets the detector associate an unusual score with a
+particular process, which it can then name in an alert or optionally pause.
 
 ### Stage B - Training the Isolation Forest (Python, on benign data only)
 
 > **Why this algorithm?** This section explains *how* the Isolation Forest works.
 > For *why* it was chosen, where it is genuinely weak, and how it measures up
 > against the alternatives, see [`WHY_ISOLATION_FOREST.md`](WHY_ISOLATION_FOREST.md)
-> and [`POTENTIAL_IMPROVEMENTS.md`](POTENTIAL_IMPROVEMENTS.md).
+> and [`EXPERIMENTS_AND_FINDINGS.md`](EXPERIMENTS_AND_FINDINGS.md).
 
-**The central research idea:** the model is trained **only on normal (benign) activity**. It never sees ransomware during training. This is *unsupervised anomaly detection* - instead of learning "what ransomware looks like," it learns "what normal looks like" and flags anything that doesn't fit. That is why File Defender needs no ransomware samples and can catch brand-new, never-before-seen attacks. The README calls this out as *"Isolation Forest learns from benign data only."*
+The model trains only on normal, or *benign*, activity. Rather than learning
+from examples of ransomware, it learns what benign windows look like and
+scores windows that differ from them as unusual. This is the project's use
+of *unsupervised anomaly detection*. It does not need ransomware samples for
+training and can flag attacks it has not encountered before.
 
-The training script is [`python/train_isolation_forest.py`](../python/train_isolation_forest.py). The heart of it:
+The main training steps in
+[`python/train_isolation_forest.py`](../python/train_isolation_forest.py) are:
 
 ```python
 scaler = StandardScaler().fit(x)          # step 1: standardize features
@@ -277,19 +409,45 @@ model = IsolationForest(                   # step 2: train the forest
 ).fit(x_scaled)
 ```
 
-**Step 1 - Standardize (the scaler).** The six features live on wildly different scales: entropy runs 0-8, but `unique_directory_count` might be 1-20 and `writes_per_second` might be 0-10. `StandardScaler` rescales each feature to have mean 0 and standard deviation 1 (subtract the mean, divide by the standard deviation), so no single feature dominates just because its raw numbers are bigger. The learned means and scales are saved (you can see them in `model.json` as `scaler_mean` and `scaler_scale`).
+**Step 1 - Standardize the features.** For each feature, `StandardScaler`
+subtracts the mean and divides by the standard deviation. This centers the
+values at mean 0 and gives them standard deviation 1. The training means
+and scales are saved in `model.json` as `scaler_mean` and `scaler_scale`,
+so scoring can apply the same transformation later.
 
-**Step 2 - The Isolation Forest itself.** Here is the beautifully simple idea behind the algorithm:
+For the standard Isolation Forest, scaling changes almost nothing. Some
+methods measure distances between points, so a feature with large numbers
+can dominate their calculations. An isolation tree works differently: it
+chooses a random cut between the smallest and largest values of one feature
+at the current node. Shifting or stretching that feature moves the minimum,
+maximum, and cut together. The same rows end up on each side, so in exact
+arithmetic the tree is unchanged.
 
-> **Anomalies are easy to isolate.** If you keep splitting the data with random cuts, a weird outlier gets cut off from everyone else after just a few cuts. A normal point, buried in the crowd, needs many cuts before it's alone.
+There is a numerical exception. scikit-learn skips a feature when its values
+are closer together than about 0.0000001, treating it as constant. Scaling a
+very narrow range can make that feature usable. This does not happen with
+the six features here.
 
-Mechanically:
+The scaler is kept for two reasons. It gives the exported JSON a consistent
+format across model types, and it matters for the Extended Isolation Forest
+in `python/extended_isolation_forest.py`. That variant uses slanted cuts that
+combine features, so their relative scales affect the result.
+
+**Step 2 - Build the Isolation Forest.** Imagine repeatedly dividing the
+training rows into two groups using random cuts. A point far from the other
+points can be separated after only a few cuts. A point surrounded by similar
+ones usually needs more cuts before it is alone.
+
+The algorithm uses that difference as follows:
 
 1. Build 200 random binary "isolation trees." To build one tree, repeatedly pick a random feature and a random split value, partitioning the points into two groups. Keep splitting until each point is isolated (or a depth limit is hit).
 2. For any point, its **path length** = how many splits it took to isolate it (how deep in the tree it lands).
 3. A **short average path length across all 200 trees = anomaly** (isolated quickly). A **long average path = normal** (took many questions to separate).
 
-Because ransomware windows have extreme values in several of the six features at once (high entropy AND high write rate AND many directories…), they sit far from the benign cluster and get isolated in very few splits - a short path - which becomes a high anomaly score.
+Ransomware windows have extreme values in several features at once: high
+entropy, a high write rate, and activity across many directories. These
+values place them far from the benign group, so fewer splits isolate them.
+The short path becomes a high anomaly score.
 
 **Setting the alarm threshold.** After training, the script scores every benign training window and picks a threshold at a high percentile of those scores ([`train_isolation_forest.py`](../python/train_isolation_forest.py#L141-L142)):
 
@@ -298,11 +456,26 @@ anomaly_scores = -model.score_samples(x_scaled)
 recommended_threshold = float(np.quantile(anomaly_scores, 1.0 - args.max_fpr))
 ```
 
-With the default `--max-fpr 0.005`, the threshold is the 99.5th percentile of benign scores. **By construction, at most 0.5% of normal windows will ever exceed it** - that is the target false-positive rate. Genuine ransomware, which the model has never seen, scores far higher and sails past the threshold.
+With the default `--max-fpr 0.005`, the threshold is the 99.5th percentile
+of the scores from the model's own benign training data. This places it near
+the top 0.5% of the calibration scores. It does not guarantee that only 0.5%
+of future benign windows will cross it, for three reasons:
+
+- On the calibration data itself, the exact fraction depends on how many rows there were and on ties. With three scores `[0, 1, 2]`, the "99.5th percentile" is 1.99, and one row in three is above it.
+- On new benign data, the rate can be anything. The project's own experiment in [`EXPERIMENTS_AND_FINDINGS.md`](EXPERIMENTS_AND_FINDINGS.md) calibrated on one benign session, tested on another, and measured 1.15% instead of 0.5%.
+- The training data and the calibration data are the same rows here. A stricter setup would fit the model on one recording, pick the threshold on a second, and test on a third.
+
+The setting is therefore a calibration rule, not a promised future rate.
+It gives you a starting threshold based on the benign activity seen so far.
 
 ### Stage C - Export to JSON (so C++ needs no Python at runtime)
 
-The trained forest is serialized to `models/model.json`: every tree's structure (which feature each node splits on, its threshold, its children, its sample counts) plus the scaler and the threshold. The exporter is [`export_model_json`](../python/train_isolation_forest.py#L51-L86). The resulting JSON top-level keys:
+After training, the program writes the model to `models/model.json`. This
+step is called *serialization*. It saves each tree's structure: split
+features, thresholds, child nodes, and sample counts. It also saves the
+scaler and alert threshold. The function
+[`export_model_json`](../python/train_isolation_forest.py#L51-L86) creates
+the file, whose top-level entries look like this:
 
 ```json
 {
@@ -317,11 +490,48 @@ The trained forest is serialized to `models/model.json`: every tree's structure 
 }
 ```
 
-Why bother? So the always-on detector is a **lightweight C++ daemon with no Python, no scikit-learn, no ML runtime** - it just walks trees and does arithmetic. The README lists this as a design goal: *"no Python runtime or ML libraries needed at runtime."*
+Saving the tree structure lets the C++ daemon score activity without running
+Python or scikit-learn. It only needs to read the saved numbers, follow the
+tree comparisons, and calculate the score.
+
+**The shipped model uses only four of its six input features.** A feature can
+separate training rows only if its values differ. In
+`testdata/benign_baseline.csv`, every process stays in one directory and none
+renames or deletes a file. Consequently, `rename_delete_rate` is always 0.0
+and `unique_directory_count` is always 1.0. No tree splits on either feature,
+so changing those inputs cannot affect the shipped model's score.
+
+`python/inspect_model.py` checks this by examining every split in every tree.
+The first block below reports that no split uses features 2 or 4. The second
+block illustrates the result: setting either feature to a million on the
+demo rows leaves the score unchanged. That illustration would not be enough
+on its own, since a chosen row might stay on the same side of every split
+even for a feature the model uses. The complete split scan establishes the
+unused-feature result.
+
+```text
+  [2] rename_delete_rate       NEVER USED  (root split in 0 of 200 trees)
+  [4] unique_directory_count   NEVER USED  (root split in 0 of 200 trees)
+  ...
+  rename_delete_rate       0.0000  <- the model cannot see this feature
+  unique_directory_count   0.0000  <- the model cannot see this feature
+```
+
+The trainer prints a warning about unused features after each run. Making
+these features useful requires training data in which they vary, rather
+than a change to the scoring code. Until then, the model reads six columns
+but bases its decisions on four.
 
 ### Stage D - Scoring a live window (C++ daemon)
 
-The daemon [`src/daemon/anomaly_model.cpp`](../src/daemon/anomaly_model.cpp) re-implements scikit-learn's scoring exactly. For a feature vector it:
+The daemon in
+[`src/daemon/anomaly_model.cpp`](../src/daemon/anomaly_model.cpp) applies
+scikit-learn's scoring formula to the exported trees using double precision.
+scikit-learn rounds its inputs to single precision first, so values exactly
+on a split can produce slightly different results. The tests below measure
+that difference.
+
+For each feature vector, the daemon follows these steps:
 
 1. **Standardizes** it with the saved `scaler_mean`/`scaler_scale` (same transform as training):
 
@@ -329,7 +539,11 @@ The daemon [`src/daemon/anomaly_model.cpp`](../src/daemon/anomaly_model.cpp) re-
    scaled[i] = (features[i] - scaler_mean_[i]) / denom;
    ```
 
-2. **Drops the point down all 200 trees** and records each path length. Leaves can hold several training samples (trees stop at a height limit), so a normalization term `c(n)` is added for the samples still bunched at the leaf ([`anomaly_model.cpp`](../src/daemon/anomaly_model.cpp#L26-L45)).
+2. **Follows the comparisons through all 200 trees** and records each path
+   length. Trees stop at a height limit, so a leaf can still contain several
+   training samples. The calculation adds `c(n)` to account for those
+   samples remaining together
+   ([`anomaly_model.cpp`](../src/daemon/anomaly_model.cpp#L26-L45)).
 
 3. **Averages the depth across the forest and converts to a score in (0, 1)** with the Isolation Forest formula:
 
@@ -359,9 +573,33 @@ The daemon [`src/daemon/anomaly_model.cpp`](../src/daemon/anomaly_model.cpp) re-
 
    Defaults are deliberately safe: **alert-only**. `--notify` adds a desktop popup; `--stop` will `SIGSTOP`-pause the flagged process (never kill it - you can resume with `kill -CONT <pid>`).
 
-### Why we can trust the C++ math: parity testing
+### How the C++ math is checked: two parity tests
 
-Because the C++ daemon only runs on Linux, [`python/verify_parity.py`](../python/verify_parity.py) re-implements the JSON scoring in pure Python and proves it matches scikit-learn's own score to within `1e-9`. If parity passes, the JSON format and the scoring math are correct, so the C++ port (which mirrors the Python line for line) can be trusted. Run it with `uv run python python/verify_parity.py`.
+The project has two *parity tests*, meaning tests that compare the outputs
+of different implementations. They check different parts of the work.
+
+**`verify_parity.py`** runs on any machine. It compares scikit-learn's scores
+with a Python implementation that reads the JSON trees. On ordinary rows,
+the scores agree to about `1e-16`. The script does not run C++, so this checks
+the saved representation and scoring recipe rather than the daemon itself.
+
+It also tests rows placed exactly on split thresholds. Those scores differ
+by up to `2e-3`: rounding an input to single precision (`float32`) can put
+it on a different side of a split from the double-precision value. Real
+windows almost never land exactly on a threshold, but the test measures
+this case explicitly.
+
+**`verify_cpp_parity.py`** runs on Linux after the daemon has been built.
+It starts the daemon with `--dump-features`, which prints the six features
+and score for each event. It then compares those values with the Python
+reference. Unlike the first test, it can catch a disagreement between
+`feature_window.cpp` and `features.py`. Run it after changing a feature
+definition:
+
+```sh
+uv run python python/verify_parity.py
+uv run python python/verify_cpp_parity.py --daemon build/file_defender_daemon
+```
 
 ---
 
@@ -373,31 +611,47 @@ Follow pid `4242` from `sample_events.csv` through the whole system:
 
 2. **The window fills.** All these events land in pid 4242's own 10-second rolling window.
 
-3. **Six features are computed.** The window now shows: elevated `writes_per_second`, a nonzero `rename_delete_rate`, an `average_byte_entropy` dragged upward by the three ~7.9 writes, and multiple `unique_directory_count` (`/tax`, `/Pictures`, `/Desktop`) and `unique_extension_count` (`.locked`, `.jpg`, `.txt`).
+3. **Six features are computed.** The window has an elevated write rate,
+   a nonzero rename/delete rate, and an average entropy raised by the three
+   writes near 7.9. It also spans several directories (`/tax`, `/Pictures`,
+   `/Desktop`) and extensions (`.locked`, `.jpg`, `.txt`). As explained in
+   Stage C, the shipped model does not use `rename_delete_rate` or
+   `unique_directory_count`. Its score depends on the other four features:
+   event rate, write rate, average entropy, and extension count.
 
-4. **The forest scores it.** This vector sits far from every benign training window, so the isolation trees separate it in very few splits → short average path → **anomaly score near 1.0**.
+4. **The forest scores it.** The vector differs from the benign training
+   windows and is separated in fewer splits. Its shorter average path gives
+   a higher score. With the shipped model, pid 4242's highest-scoring window
+   reaches **0.77**, above the threshold of **0.72**. A score near 1.0 would
+   require separation after only one or two cuts in every tree; the demo
+   does not need a score that high to trigger an alert.
 
 5. **The threshold fires.** The score clears the `recommended_threshold`, and the daemon prints an `ALERT` naming pid 4242. Meanwhile `code`, `libreoffice`, and `firefox` stay comfortably below threshold and are never flagged.
 
-That is the project's core research claim, demonstrated end to end: **ransomware can be recognized from a small set of behavioral features - entropy chief among them - without ever training on ransomware itself.**
+The example follows the project's central idea from an event record to an
+alert: recognize ransomware behavior using a small set of measurements,
+including entropy, without using ransomware examples for training.
 
 ---
 
 ## Quick Reference - Where Each Piece Lives
 
-| Concept | File | Key lines |
+| Concept | File | Where to look |
 | --- | --- | --- |
-| Shannon entropy calculation | `src/collector/fanotify_collector.c` | `shannon_entropy()`, L63-82 |
-| Entropy sampling (first 4 KB) | `src/collector/fanotify_collector.c` | L232-235 |
-| CSV row printed per event | `src/collector/fanotify_collector.c` | L248-250 |
-| The six features (definition) | `python/features.py` | L23-105 |
-| The six features (C++, live) | `src/daemon/feature_window.cpp` | L23-57 |
-| Rolling-window expiry | `src/daemon/feature_window.cpp` | L17-21 |
-| Training the Isolation Forest | `python/train_isolation_forest.py` | L119-142 |
-| Threshold from benign scores | `python/train_isolation_forest.py` | L141-142 |
-| Model → JSON export | `python/train_isolation_forest.py` | L51-86 |
-| Isolation Forest scoring (C++) | `src/daemon/anomaly_model.cpp` | L47-69 |
-| Alert / notify / pause logic | `src/daemon/main.cpp` | L176-196 |
-| Python↔C++ parity proof | `python/verify_parity.py` | whole file |
-| Synthetic entropy for demos | `python/simulate_activity.py` | L199-217 |
-```
+| Shannon entropy calculation | `src/collector/fanotify_collector.c` | `shannon_entropy()` |
+| Entropy sampling (first 4 KB, read/write only) | `src/collector/fanotify_collector.c` | the `pread` call in `main()` |
+| CSV row printed per event | `src/collector/fanotify_collector.c` | the `printf` in `main()` |
+| The six features (definition) | `python/features.py` | `FEATURE_COLUMNS`, `build_feature_rows()` |
+| The six features (C++, live) | `src/daemon/feature_window.cpp` | `FeatureWindow::features()` |
+| Rolling-window expiry | `src/daemon/feature_window.cpp` | `FeatureWindow::expire_old_events()` |
+| Training the Isolation Forest | `python/train_isolation_forest.py` | `main()` |
+| Which features the forest really uses | `python/train_isolation_forest.py`, `python/inspect_model.py` | `report_unused_features()`, `describe_forest()` |
+| Threshold from benign scores | `python/train_isolation_forest.py` | the `np.quantile` line in `main()` |
+| Model → JSON export | `python/train_isolation_forest.py` | `export_model_json()` |
+| Isolation Forest scoring (C++) | `src/daemon/anomaly_model.cpp` | `AnomalyModel::score()`, `AnomalyModel::path_length()` |
+| Alert / notify / pause logic | `src/daemon/main.cpp` | the `while (std::getline(...))` loop |
+| JSON-vs-scikit-learn check (any machine) | `python/verify_parity.py` | whole file |
+| C++-vs-Python check (Linux) | `python/verify_cpp_parity.py` | whole file |
+| Synthetic entropy for demos | `python/simulate_activity.py` | the `if operation in ("open", "close")` branches |
+
+Function names are used instead of line numbers because line numbers drift every time a file is edited.

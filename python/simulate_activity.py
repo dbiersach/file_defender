@@ -122,6 +122,12 @@ def generate_benign_event_log(seed: int = 123, n_events: int = 1200) -> pd.DataF
         extension = extensions[rng.integers(len(extensions))]
         path = f"{directory}/file{int(rng.integers(0, 12))}{extension}"
 
+        # Entropy contract, shared with the live collector
+        # (src/collector/fanotify_collector.c): open and close carry 0.0,
+        # because they touch no content; read and write carry the entropy of
+        # the bytes involved. The live collector measures the first 4096
+        # bytes of the file at that moment; here the number is drawn from a
+        # distribution chosen to look like that measurement.
         if operation in ("open", "close"):
             entropy = 0.0
             size_bytes = 0
@@ -225,6 +231,7 @@ def generate_attack_scenario(seed: int = 7) -> pd.DataFrame:
         path = (
             f"{directory}/file{int(rng.integers(0, 10))}{exts[rng.integers(len(exts))]}"
         )
+        # Same entropy contract as generate_event_log: open/close carry 0.0.
         if op in ("open", "close"):
             add(t, name, pid, op, path)
         else:

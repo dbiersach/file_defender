@@ -16,7 +16,13 @@ count, or subsample size can recover information the model never receives.
 The fix
 -------
 Wrap the existing score in two classical sequential-change detectors, both of
-which are a handful of arithmetic operations per event and need no model:
+which are a handful of arithmetic operations per event and need no model.
+
+One thing to keep straight when reading results: both rules update once per
+scored window (that is, once per event), not once per second. "About seven
+recent observations" is seven events, which might be two seconds for a busy
+process or two minutes for a quiet one. Attack pace tables should be read with
+that in mind.
 
   1. `EwmaSmoother` - an exponentially weighted moving average. It answers "has
      this process been mildly unusual for a while?" by letting each score decay

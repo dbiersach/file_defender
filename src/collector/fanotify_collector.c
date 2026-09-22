@@ -229,10 +229,30 @@ int main(int argc, char **argv) {
             if (resolve_fd_path(meta->fd, path, sizeof(path)) == 0 &&
                 strncmp(path, watch_dir, watch_dir_len) == 0) {
 
-                /* Sample file content to estimate entropy of what was written. */
+                /*
+                 * Entropy contract (must match python/simulate_activity.py and
+                 * python/simulate_realistic_baseline.py):
+                 *   open, close -> 0.0. Opening touches no content, and the
+                 *          content of a close-after-write was already sampled
+                 *          at the write, so sampling it again would count the
+                 *          same bytes twice in the window average.
+                 *   read, write -> entropy of the first ENTROPY_SAMPLE_BYTES
+                 *          of the file as it is right now.
+                 *
+                 * Note what this is NOT: we never see the exact bytes a process
+                 * handed to write(). We see the file's current prefix. For a
+                 * file encrypted from its first byte that is the same thing;
+                 * for a file modified in the middle, or only partly encrypted,
+                 * the prefix may not reflect the change at all.
+                 */
                 unsigned char sample[ENTROPY_SAMPLE_BYTES];
-                ssize_t sampled = pread(meta->fd, sample, sizeof(sample), 0);
-                double entropy = (sampled > 0) ? shannon_entropy(sample, (size_t)sampled) : 0.0;
+                double entropy = 0.0;
+                if (meta->mask & (FAN_ACCESS | FAN_MODIFY)) {
+                    ssize_t sampled = pread(meta->fd, sample, sizeof(sample), 0);
+                    if (sampled > 0) {
+                        entropy = shannon_entropy(sample, (size_t)sampled);
+                    }
+                }
 
                 struct stat st;
                 unsigned long long size_bytes = 0;

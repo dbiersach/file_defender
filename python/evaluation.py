@@ -2,10 +2,11 @@
 
 Shared evaluation machinery for comparing detector designs.
 
-None of the existing scripts measure detection quality. `verify_parity.py`
-proves the C++ and Python scoring agree, and `train_isolation_forest.py` reports
-the training-score distribution, but nothing answers the question a reviewer
-will ask first: *how good is this detector, and compared to what?*
+None of the original scripts measure detection quality. `verify_parity.py`
+checks that the exported JSON scores the same way scikit-learn does, and
+`train_isolation_forest.py` reports the training-score distribution, but nothing
+answers the question a reviewer will ask first: *how good is this detector, and
+compared to what?*
 
 This module supplies the three pieces every such comparison needs:
 
@@ -88,10 +89,14 @@ def build_labeled_features(
 
 
 def threshold_at_fpr(benign_scores: np.ndarray, max_fpr: float = 0.005) -> float:
-    """Return the score threshold that flags at most `max_fpr` of benign rows.
+    """Return the (1 - max_fpr) quantile of the benign scores.
 
     This is the same rule `train_isolation_forest.py` uses for the Isolation
-    Forest, applied uniformly to every detector so the comparison is fair.
+    Forest, applied uniformly to every detector so the comparison is fair. It
+    aims the threshold at the top `max_fpr` of the rows it was given. The
+    exact fraction flagged on those same rows depends on sample size and ties,
+    and the fraction on new benign data can be higher; see the out-of-sample
+    numbers in docs/EXPERIMENTS_AND_FINDINGS.md.
     """
     if not 0.0 < max_fpr < 1.0:
         raise ValueError("max_fpr must be in (0, 1)")
@@ -125,16 +130,23 @@ class DetectorReport:
 
 
 def count_files_encrypted_before(rows: pd.DataFrame, alert_time: float | None) -> int:
-    """Count attacker `write` events that completed before the first alert.
+    """Count attacker `write` events at or before the time of the first alert.
 
-    This is the metric that actually matters to a user: how many files were
-    already encrypted by the time the detector spoke up. `None` means the
-    detector never fired, so every file was lost.
+    This is the metric a user cares about most: how many files were already
+    encrypted by the time the detector spoke up. `None` means the detector
+    never fired, so every file was lost.
+
+    The comparison is `<=`, not `<`, on purpose. The daemon scores a window
+    only after the event that fills it has already happened. If a write event
+    is the one that triggers the alert, that write is finished by the time the
+    alarm sounds, so it counts as a lost file. Keep in mind that this is a
+    simulation proxy: in the simulator one `write` row stands for one whole
+    file, and there is no queueing or reaction delay.
     """
     writes = rows[rows["operation"] == "write"]
     if alert_time is None:
         return int(len(writes))
-    return int((writes["timestamp_seconds"] < alert_time).sum())
+    return int((writes["timestamp_seconds"] <= alert_time).sum())
 
 
 def evaluate_detector(
@@ -215,8 +227,10 @@ def evaluate_detector(
 
 def format_report_table(reports: list[DetectorReport]) -> str:
     """Render a list of DetectorReport rows as a fixed-width table."""
+    # "recall" is the share of attack windows that were flagged. It is not the
+    # share of attacks caught: one attack produces many windows.
     header = (
-        f"{'detector':<22} {'thresh':>8} {'benign FPR':>11} {'detect':>8} "
+        f"{'detector':<22} {'thresh':>8} {'benign FPR':>11} {'recall':>8} "
         f"{'AUC':>7} {'AP':>7} {'lost':>6} {'latency':>9} {'model KB':>9}"
     )
     lines = [header, "-" * len(header)]

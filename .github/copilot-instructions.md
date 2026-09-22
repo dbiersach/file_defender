@@ -178,8 +178,8 @@ VS Code Markdown preview:
 $$H = -\sum_{i=0}^{255} p_i \, \log_2(p_i)$$
 ```
 
-Keep using `$...$` and `$$...$$` in `.md` files. See `CLAUDE.md` for why chat
-replies are the one place that must not use LaTeX.
+Keep using `$...$` and `$$...$$` in `.md` files. The chat-output guidance
+referenced in `AGENTS.md` explains why chat replies must not use LaTeX.
 
 ---
 
@@ -321,7 +321,7 @@ or fail with a stale import, with no useful error message.
   `uv run python python/train_isolation_forest.py`. If that succeeds, the
   problem is the extension host, not the code.
 
-See `.claude/skills/machine-environment-notes/SKILL.md` for the fuller
+See the machine-environment reference listed in `AGENTS.md` for the fuller
 treatment, including clearing orphaned kernel processes.
 
 ### The daemon and collectors are Linux-only
@@ -335,17 +335,14 @@ or an equivalent distribution.
 
 ## Reference Material Loaded On Demand
 
-Two longer references are skills under `.claude/skills/`, so Claude Code loads
-them only when the task calls for them instead of on every session. Other tools
-should read the files directly.
+Two longer references are loaded only when relevant to the task. Their paths
+are listed under "Reference Material Loaded On Demand" in `AGENTS.md`:
 
-- `.claude/skills/office-latex/SKILL.md` - Office-compatible LaTeX for the
-  Microsoft 365 Equation Editor (PowerPoint and Word), including Dirac
-  bra-ket notation.
-- `.claude/skills/machine-environment-notes/SKILL.md` - diagnosing a script or
-  notebook that hangs or never finishes, clearing orphaned kernel processes,
-  reloading VS Code after a `uv sync`, and why quantum chemistry packages
-  cannot be installed on this machine.
+- The Office LaTeX reference covers Microsoft 365 Equation Editor input for
+  PowerPoint and Word, including Dirac bra-ket notation.
+- The machine-environment reference covers scripts or notebooks that hang,
+  orphaned kernel processes, reloading VS Code after a `uv sync`, and why
+  quantum chemistry packages cannot be installed on this machine.
 
 ---
 
